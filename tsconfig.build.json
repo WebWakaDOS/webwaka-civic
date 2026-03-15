@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "outDir": "dist/types"
+  },
+  "include": [
+    "src/modules/church-ngo/ui.tsx",
+    "src/modules/church-ngo/utils.ts",
+    "src/modules/church-ngo/i18n.ts",
+    "src/modules/church-ngo/apiClient.ts",
+    "src/core/sync/client.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "src/modules/**/api/**",
+    "src/core/event-bus/**",
+    "src/core/logger.ts",
+    "src/core/db/queries.ts",
+    "src/core/db/schema.ts"
+  ]
+}
