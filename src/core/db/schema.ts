@@ -489,3 +489,411 @@ export interface CivicAnnouncement {
   updatedAt: number;
   deletedAt?: number;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CIV-2: POLITICAL PARTY MANAGEMENT
+// Blueprint Reference: Part 10.9 (Civic & Political Suite — Political Party Management)
+// Part 9.2 (Universal Architecture Standards)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── CIV-2 Enums ─────────────────────────────────────────────────────────────
+
+/** Hierarchical levels in a Nigerian political party structure [Part 10.9] */
+export type PartyStructureLevel =
+  | "national"
+  | "state"
+  | "senatorial"
+  | "federal_constituency"
+  | "lga"
+  | "ward";
+
+/** Member status within the party */
+export type PartyMemberStatus =
+  | "active"
+  | "suspended"
+  | "expelled"
+  | "deceased"
+  | "resigned";
+
+/** Role/position category of a party member */
+export type PartyMemberRole =
+  | "ordinary"
+  | "delegate"
+  | "executive"
+  | "chairman"
+  | "secretary"
+  | "treasurer"
+  | "youth_leader"
+  | "women_leader";
+
+/** Payment method for party dues */
+export type PartyPaymentMethod =
+  | "cash"
+  | "bank_transfer"
+  | "pos"
+  | "mobile_money"
+  | "online";
+
+/** Type of party meeting */
+export type PartyMeetingType =
+  | "executive"
+  | "ward"
+  | "state"
+  | "national"
+  | "emergency"
+  | "congress"
+  | "convention";
+
+/** Priority level for party announcements */
+export type PartyAnnouncementPriority = "normal" | "urgent" | "critical";
+
+// ─── CIV-2 Table Name Constants ───────────────────────────────────────────────
+
+export const PARTY_TABLE_NAMES = {
+  ORGANIZATIONS: "party_organizations",
+  STRUCTURES: "party_structures",
+  MEMBERS: "party_members",
+  DUES: "party_dues",
+  POSITIONS: "party_positions",
+  MEETINGS: "party_meetings",
+  ANNOUNCEMENTS: "party_announcements",
+  ID_CARDS: "party_id_cards",
+} as const;
+
+export type PartyTableName = typeof PARTY_TABLE_NAMES[keyof typeof PARTY_TABLE_NAMES];
+
+// ─── CIV-2 TypeScript Interfaces ─────────────────────────────────────────────
+
+/** Top-level party entity (one per tenant) */
+export interface PartyOrganization {
+  id: string;
+  tenantId: string;
+  name: string;
+  abbreviation: string;
+  motto?: string;
+  logoUrl?: string;
+  foundedYear?: number;
+  inecRegistrationNumber?: string;
+  currency: Currency;
+  timezone: string;
+  annualDuesKobo: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/**
+ * Hierarchical structural unit.
+ * Levels: national -> state -> senatorial -> federal_constituency -> lga -> ward
+ */
+export interface PartyStructure {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  parentId?: string;
+  level: PartyStructureLevel;
+  name: string;
+  code?: string;
+  state?: string;
+  lga?: string;
+  ward?: string;
+  chairpersonId?: string;
+  secretaryId?: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** Individual party member */
+export interface PartyMember {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  structureId: string;
+  membershipNumber: string;
+  firstName: string;
+  lastName: string;
+  middleName?: string;
+  dateOfBirth?: number;
+  gender?: "male" | "female" | "other";
+  phone: string;
+  email?: string;
+  address?: string;
+  state?: string;
+  lga?: string;
+  ward?: string;
+  voterCardNumber?: string;
+  photoUrl?: string;
+  memberStatus: PartyMemberStatus;
+  role: PartyMemberRole;
+  joinedDate: number;
+  ndprConsent: boolean;
+  ndprConsentDate?: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** Annual dues payment record */
+export interface PartyDues {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  memberId: string;
+  year: number;
+  amountKobo: number;
+  paymentMethod: PartyPaymentMethod;
+  receiptNumber: string;
+  paidAt: number;
+  collectedBy?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** Elected or appointed position within the party */
+export interface PartyPosition {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  structureId: string;
+  title: string;
+  holderId?: string;
+  electedDate?: number;
+  expiresDate?: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** Party meeting at any structural level */
+export interface PartyMeeting {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  structureId: string;
+  title: string;
+  meetingType: PartyMeetingType;
+  venue?: string;
+  scheduledAt: number;
+  minutesUrl?: string;
+  attendeeCount?: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** Official party announcement */
+export interface PartyAnnouncement {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  structureId?: string;
+  title: string;
+  content: string;
+  priority: PartyAnnouncementPriority;
+  publishedAt?: number;
+  expiresAt?: number;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+/** Digital membership ID card record */
+export interface PartyIdCard {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  memberId: string;
+  cardNumber: string;
+  issuedAt: number;
+  expiresAt?: number;
+  cardImageUrl?: string;
+  isActive: boolean;
+  revokedAt?: number;
+  revokedReason?: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+// ─── CIV-2 D1 Migration SQL ───────────────────────────────────────────────────
+
+export const PARTY_MIGRATION_SQL = `
+-- WebWaka Civic -- CIV-2 Political Party D1 Migration
+-- Blueprint Reference: Part 9.2, Part 10.9
+-- Generated: 2026-03-15
+
+-- 1. party_organizations
+CREATE TABLE IF NOT EXISTS party_organizations (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  abbreviation TEXT NOT NULL,
+  motto TEXT,
+  logoUrl TEXT,
+  foundedYear INTEGER,
+  inecRegistrationNumber TEXT,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  timezone TEXT NOT NULL DEFAULT 'Africa/Lagos',
+  annualDuesKobo INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_orgs_tenant ON party_organizations(tenantId);
+
+-- 2. party_structures
+CREATE TABLE IF NOT EXISTS party_structures (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  parentId TEXT,
+  level TEXT NOT NULL CHECK(level IN ('national','state','senatorial','federal_constituency','lga','ward')),
+  name TEXT NOT NULL,
+  code TEXT,
+  state TEXT,
+  lga TEXT,
+  ward TEXT,
+  chairpersonId TEXT,
+  secretaryId TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_structs_tenant ON party_structures(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_structs_parent ON party_structures(parentId);
+
+-- 3. party_members
+CREATE TABLE IF NOT EXISTS party_members (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  structureId TEXT NOT NULL,
+  membershipNumber TEXT NOT NULL,
+  firstName TEXT NOT NULL,
+  lastName TEXT NOT NULL,
+  middleName TEXT,
+  dateOfBirth INTEGER,
+  gender TEXT CHECK(gender IN ('male','female','other')),
+  phone TEXT NOT NULL,
+  email TEXT,
+  address TEXT,
+  state TEXT,
+  lga TEXT,
+  ward TEXT,
+  voterCardNumber TEXT,
+  photoUrl TEXT,
+  memberStatus TEXT NOT NULL DEFAULT 'active' CHECK(memberStatus IN ('active','suspended','expelled','deceased','resigned')),
+  role TEXT NOT NULL DEFAULT 'ordinary' CHECK(role IN ('ordinary','delegate','executive','chairman','secretary','treasurer','youth_leader','women_leader')),
+  joinedDate INTEGER NOT NULL,
+  ndprConsent INTEGER NOT NULL DEFAULT 0,
+  ndprConsentDate INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_members_tenant ON party_members(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_members_structure ON party_members(structureId);
+CREATE INDEX IF NOT EXISTS idx_party_members_status ON party_members(memberStatus);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_party_members_number ON party_members(tenantId, membershipNumber) WHERE deletedAt IS NULL;
+
+-- 4. party_dues
+CREATE TABLE IF NOT EXISTS party_dues (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  memberId TEXT NOT NULL,
+  year INTEGER NOT NULL,
+  amountKobo INTEGER NOT NULL,
+  paymentMethod TEXT NOT NULL CHECK(paymentMethod IN ('cash','bank_transfer','pos','mobile_money','online')),
+  receiptNumber TEXT NOT NULL,
+  paidAt INTEGER NOT NULL,
+  collectedBy TEXT,
+  notes TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_dues_tenant ON party_dues(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_dues_member ON party_dues(memberId, year);
+
+-- 5. party_positions
+CREATE TABLE IF NOT EXISTS party_positions (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  structureId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  holderId TEXT,
+  electedDate INTEGER,
+  expiresDate INTEGER,
+  isActive INTEGER NOT NULL DEFAULT 1,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_positions_tenant ON party_positions(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_positions_structure ON party_positions(structureId);
+
+-- 6. party_meetings
+CREATE TABLE IF NOT EXISTS party_meetings (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  structureId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  meetingType TEXT NOT NULL CHECK(meetingType IN ('executive','ward','state','national','emergency','congress','convention')),
+  venue TEXT,
+  scheduledAt INTEGER NOT NULL,
+  minutesUrl TEXT,
+  attendeeCount INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_meetings_tenant ON party_meetings(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_meetings_scheduled ON party_meetings(scheduledAt);
+
+-- 7. party_announcements
+CREATE TABLE IF NOT EXISTS party_announcements (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  structureId TEXT,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','urgent','critical')),
+  publishedAt INTEGER,
+  expiresAt INTEGER,
+  createdBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_announcements_tenant ON party_announcements(tenantId, organizationId);
+
+-- 8. party_id_cards
+CREATE TABLE IF NOT EXISTS party_id_cards (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  memberId TEXT NOT NULL,
+  cardNumber TEXT NOT NULL,
+  issuedAt INTEGER NOT NULL,
+  expiresAt INTEGER,
+  cardImageUrl TEXT,
+  isActive INTEGER NOT NULL DEFAULT 1,
+  revokedAt INTEGER,
+  revokedReason TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_cards_tenant ON party_id_cards(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_cards_member ON party_id_cards(memberId);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_party_cards_number ON party_id_cards(tenantId, cardNumber) WHERE deletedAt IS NULL;
+`;

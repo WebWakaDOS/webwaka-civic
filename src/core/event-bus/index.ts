@@ -26,7 +26,19 @@ export type CivicEventType =
   | "civic.grant.disbursed"
   | "civic.member.created"
   | "civic.donation.received"
-  | "civic.grant.approved";
+  | "civic.grant.approved"
+  // CIV-2: Political Party Events [Part 10.9]
+  | "party.member.registered"
+  | "party.member.suspended"
+  | "party.member.expelled"
+  | "party.dues.paid"
+  | "party.dues.overdue"
+  | "party.position.assigned"
+  | "party.meeting.scheduled"
+  | "party.id_card.issued"
+  | "party.id_card.revoked"
+  | "party.structure.created"
+  | "party.announcement.published";
 
 /**
  * CIVIC_EVENTS — named constants for all event types.
@@ -180,3 +192,25 @@ export class EventBus {
 export function createEventBus(env: EventBusEnv, fetchFn?: typeof fetch): EventBus {
   return new EventBus(env, fetchFn);
 }
+
+// ─── CIV-2: Political Party Event Constants ───────────────────────────────────
+
+/**
+ * PARTY_EVENTS — named constants for all CIV-2 Political Party event types.
+ * Blueprint Reference: Part 5 (Platform Event Bus), Part 10.9
+ */
+export const PARTY_EVENTS = {
+  MEMBER_REGISTERED: "party.member.registered" as CivicEventType,
+  MEMBER_SUSPENDED: "party.member.suspended" as CivicEventType,
+  MEMBER_EXPELLED: "party.member.expelled" as CivicEventType,
+  DUES_PAID: "party.dues.paid" as CivicEventType,
+  DUES_OVERDUE: "party.dues.overdue" as CivicEventType,
+  POSITION_ASSIGNED: "party.position.assigned" as CivicEventType,
+  MEETING_SCHEDULED: "party.meeting.scheduled" as CivicEventType,
+  ID_CARD_ISSUED: "party.id_card.issued" as CivicEventType,
+  ID_CARD_REVOKED: "party.id_card.revoked" as CivicEventType,
+  STRUCTURE_CREATED: "party.structure.created" as CivicEventType,
+  ANNOUNCEMENT_PUBLISHED: "party.announcement.published" as CivicEventType,
+} as const;
+
+export type PartyEventType = typeof PARTY_EVENTS[keyof typeof PARTY_EVENTS];

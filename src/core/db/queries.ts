@@ -629,3 +629,677 @@ export async function getDashboardSummary(
     upcomingEventsCount: events?.count ?? 0,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CIV-2: POLITICAL PARTY MANAGEMENT — Query Helpers
+// Blueprint Reference: Part 9.3 (Zero Direct Database Clients)
+// Part 10.9 (Civic & Political Suite — Political Party Management)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import type {
+  PartyOrganization,
+  PartyStructure,
+  PartyMember,
+  PartyDues,
+  PartyPosition,
+  PartyMeeting,
+  PartyAnnouncement,
+  PartyIdCard,
+} from "./schema.ts";
+
+// ─── Party Organization Queries ───────────────────────────────────────────────
+
+export async function getPartyOrganizationByTenant(
+  db: D1Database,
+  tenantId: string
+): Promise<PartyOrganization | null> {
+  return db
+    .prepare("SELECT * FROM party_organizations WHERE tenantId = ? AND deletedAt IS NULL LIMIT 1")
+    .bind(tenantId)
+    .first<PartyOrganization>();
+}
+
+export async function createPartyOrganization(
+  db: D1Database,
+  org: PartyOrganization
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_organizations
+        (id, tenantId, name, abbreviation, motto, logoUrl, foundedYear,
+         inecRegistrationNumber, currency, timezone, annualDuesKobo, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      org.id, org.tenantId, org.name, org.abbreviation,
+      org.motto ?? null, org.logoUrl ?? null, org.foundedYear ?? null,
+      org.inecRegistrationNumber ?? null, org.currency, org.timezone,
+      org.annualDuesKobo, org.createdAt, org.updatedAt
+    )
+    .run();
+}
+
+export async function updatePartyOrganization(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  updates: Partial<PartyOrganization>
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE party_organizations SET
+        name = COALESCE(?, name),
+        abbreviation = COALESCE(?, abbreviation),
+        motto = COALESCE(?, motto),
+        logoUrl = COALESCE(?, logoUrl),
+        foundedYear = COALESCE(?, foundedYear),
+        inecRegistrationNumber = COALESCE(?, inecRegistrationNumber),
+        currency = COALESCE(?, currency),
+        timezone = COALESCE(?, timezone),
+        annualDuesKobo = COALESCE(?, annualDuesKobo),
+        updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(
+      updates.name ?? null, updates.abbreviation ?? null, updates.motto ?? null,
+      updates.logoUrl ?? null, updates.foundedYear ?? null,
+      updates.inecRegistrationNumber ?? null, updates.currency ?? null,
+      updates.timezone ?? null, updates.annualDuesKobo ?? null,
+      Date.now(), id, tenantId
+    )
+    .run();
+}
+
+// ─── Party Structure Queries ──────────────────────────────────────────────────
+
+export async function getPartyStructuresByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  parentId?: string | null
+): Promise<PartyStructure[]> {
+  if (parentId === null) {
+    const result = await db
+      .prepare(
+        "SELECT * FROM party_structures WHERE tenantId = ? AND organizationId = ? AND parentId IS NULL AND deletedAt IS NULL ORDER BY level, name"
+      )
+      .bind(tenantId, organizationId)
+      .all<PartyStructure>();
+    return result.results;
+  }
+  if (parentId !== undefined) {
+    const result = await db
+      .prepare(
+        "SELECT * FROM party_structures WHERE tenantId = ? AND organizationId = ? AND parentId = ? AND deletedAt IS NULL ORDER BY name"
+      )
+      .bind(tenantId, organizationId, parentId)
+      .all<PartyStructure>();
+    return result.results;
+  }
+  const result = await db
+    .prepare(
+      "SELECT * FROM party_structures WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL ORDER BY level, name"
+    )
+    .bind(tenantId, organizationId)
+    .all<PartyStructure>();
+  return result.results;
+}
+
+export async function getPartyStructureById(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<PartyStructure | null> {
+  return db
+    .prepare("SELECT * FROM party_structures WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+    .bind(id, tenantId)
+    .first<PartyStructure>();
+}
+
+export async function createPartyStructure(
+  db: D1Database,
+  structure: PartyStructure
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_structures
+        (id, tenantId, organizationId, parentId, level, name, code, state, lga, ward,
+         chairpersonId, secretaryId, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      structure.id, structure.tenantId, structure.organizationId,
+      structure.parentId ?? null, structure.level, structure.name,
+      structure.code ?? null, structure.state ?? null, structure.lga ?? null,
+      structure.ward ?? null, structure.chairpersonId ?? null,
+      structure.secretaryId ?? null, structure.createdAt, structure.updatedAt
+    )
+    .run();
+}
+
+export async function updatePartyStructure(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  updates: Partial<PartyStructure>
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE party_structures SET
+        name = COALESCE(?, name),
+        code = COALESCE(?, code),
+        state = COALESCE(?, state),
+        lga = COALESCE(?, lga),
+        ward = COALESCE(?, ward),
+        chairpersonId = COALESCE(?, chairpersonId),
+        secretaryId = COALESCE(?, secretaryId),
+        updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(
+      updates.name ?? null, updates.code ?? null, updates.state ?? null,
+      updates.lga ?? null, updates.ward ?? null,
+      updates.chairpersonId ?? null, updates.secretaryId ?? null,
+      Date.now(), id, tenantId
+    )
+    .run();
+}
+
+export async function softDeletePartyStructure(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  await db
+    .prepare("UPDATE party_structures SET deletedAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?")
+    .bind(Date.now(), Date.now(), id, tenantId)
+    .run();
+}
+
+// ─── Party Member Queries ─────────────────────────────────────────────────────
+
+export interface PartyMemberFilters {
+  structureId?: string;
+  memberStatus?: string;
+  role?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export async function getPartyMembersByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  filters: PartyMemberFilters = {}
+): Promise<{ members: PartyMember[]; total: number }> {
+  const { structureId, memberStatus, role, search, page = 1, limit = 20 } = filters;
+  const offset = (page - 1) * limit;
+  const conditions: string[] = [
+    "tenantId = ?", "organizationId = ?", "deletedAt IS NULL",
+  ];
+  const params: unknown[] = [tenantId, organizationId];
+  if (structureId) { conditions.push("structureId = ?"); params.push(structureId); }
+  if (memberStatus) { conditions.push("memberStatus = ?"); params.push(memberStatus); }
+  if (role) { conditions.push("role = ?"); params.push(role); }
+  if (search) {
+    conditions.push("(firstName LIKE ? OR lastName LIKE ? OR membershipNumber LIKE ? OR phone LIKE ?)");
+    const s = `%${search}%`;
+    params.push(s, s, s, s);
+  }
+  const where = conditions.join(" AND ");
+  const [countResult, membersResult] = await db.batch<PartyMember | { count: number }>([
+    db.prepare(`SELECT COUNT(*) as count FROM party_members WHERE ${where}`).bind(...params),
+    db.prepare(`SELECT * FROM party_members WHERE ${where} ORDER BY lastName, firstName LIMIT ? OFFSET ?`).bind(...params, limit, offset),
+  ]);
+  const total = (countResult.results[0] as { count: number })?.count ?? 0;
+  return { members: membersResult.results as PartyMember[], total };
+}
+
+export async function getPartyMemberById(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<PartyMember | null> {
+  return db
+    .prepare("SELECT * FROM party_members WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+    .bind(id, tenantId)
+    .first<PartyMember>();
+}
+
+export async function createPartyMember(
+  db: D1Database,
+  member: PartyMember
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_members
+        (id, tenantId, organizationId, structureId, membershipNumber, firstName, lastName,
+         middleName, dateOfBirth, gender, phone, email, address, state, lga, ward,
+         voterCardNumber, photoUrl, memberStatus, role, joinedDate,
+         ndprConsent, ndprConsentDate, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      member.id, member.tenantId, member.organizationId, member.structureId,
+      member.membershipNumber, member.firstName, member.lastName,
+      member.middleName ?? null, member.dateOfBirth ?? null, member.gender ?? null,
+      member.phone, member.email ?? null, member.address ?? null,
+      member.state ?? null, member.lga ?? null, member.ward ?? null,
+      member.voterCardNumber ?? null, member.photoUrl ?? null,
+      member.memberStatus, member.role, member.joinedDate,
+      member.ndprConsent ? 1 : 0, member.ndprConsentDate ?? null,
+      member.createdAt, member.updatedAt
+    )
+    .run();
+}
+
+export async function updatePartyMember(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  updates: Partial<PartyMember>
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE party_members SET
+        firstName = COALESCE(?, firstName),
+        lastName = COALESCE(?, lastName),
+        middleName = COALESCE(?, middleName),
+        phone = COALESCE(?, phone),
+        email = COALESCE(?, email),
+        address = COALESCE(?, address),
+        state = COALESCE(?, state),
+        lga = COALESCE(?, lga),
+        ward = COALESCE(?, ward),
+        voterCardNumber = COALESCE(?, voterCardNumber),
+        photoUrl = COALESCE(?, photoUrl),
+        memberStatus = COALESCE(?, memberStatus),
+        role = COALESCE(?, role),
+        structureId = COALESCE(?, structureId),
+        updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(
+      updates.firstName ?? null, updates.lastName ?? null, updates.middleName ?? null,
+      updates.phone ?? null, updates.email ?? null, updates.address ?? null,
+      updates.state ?? null, updates.lga ?? null, updates.ward ?? null,
+      updates.voterCardNumber ?? null, updates.photoUrl ?? null,
+      updates.memberStatus ?? null, updates.role ?? null, updates.structureId ?? null,
+      Date.now(), id, tenantId
+    )
+    .run();
+}
+
+export async function softDeletePartyMember(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  await db
+    .prepare("UPDATE party_members SET deletedAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?")
+    .bind(Date.now(), Date.now(), id, tenantId)
+    .run();
+}
+
+export async function getPartyMemberCount(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string
+): Promise<number> {
+  const result = await db
+    .prepare("SELECT COUNT(*) as count FROM party_members WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL AND memberStatus = 'active'")
+    .bind(tenantId, organizationId)
+    .first<{ count: number }>();
+  return result?.count ?? 0;
+}
+
+// ─── Party Dues Queries ───────────────────────────────────────────────────────
+
+export async function getPartyDuesByMember(
+  db: D1Database,
+  memberId: string,
+  tenantId: string
+): Promise<PartyDues[]> {
+  const result = await db
+    .prepare("SELECT * FROM party_dues WHERE memberId = ? AND tenantId = ? AND deletedAt IS NULL ORDER BY year DESC")
+    .bind(memberId, tenantId)
+    .all<PartyDues>();
+  return result.results;
+}
+
+export async function getPartyDuesByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  year?: number
+): Promise<PartyDues[]> {
+  if (year !== undefined) {
+    const result = await db
+      .prepare("SELECT * FROM party_dues WHERE tenantId = ? AND organizationId = ? AND year = ? AND deletedAt IS NULL ORDER BY paidAt DESC")
+      .bind(tenantId, organizationId, year)
+      .all<PartyDues>();
+    return result.results;
+  }
+  const result = await db
+    .prepare("SELECT * FROM party_dues WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL ORDER BY year DESC, paidAt DESC")
+    .bind(tenantId, organizationId)
+    .all<PartyDues>();
+  return result.results;
+}
+
+export async function createPartyDues(
+  db: D1Database,
+  dues: PartyDues
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_dues
+        (id, tenantId, organizationId, memberId, year, amountKobo, paymentMethod,
+         receiptNumber, paidAt, collectedBy, notes, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      dues.id, dues.tenantId, dues.organizationId, dues.memberId,
+      dues.year, dues.amountKobo, dues.paymentMethod, dues.receiptNumber,
+      dues.paidAt, dues.collectedBy ?? null, dues.notes ?? null,
+      dues.createdAt, dues.updatedAt
+    )
+    .run();
+}
+
+export async function softDeletePartyDues(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  await db
+    .prepare("UPDATE party_dues SET deletedAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?")
+    .bind(Date.now(), Date.now(), id, tenantId)
+    .run();
+}
+
+export async function getPartyDuesSummary(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  year: number
+): Promise<{ totalCollectedKobo: number; paymentCount: number }> {
+  const result = await db
+    .prepare(
+      "SELECT SUM(amountKobo) as totalCollectedKobo, COUNT(*) as paymentCount FROM party_dues WHERE tenantId = ? AND organizationId = ? AND year = ? AND deletedAt IS NULL"
+    )
+    .bind(tenantId, organizationId, year)
+    .first<{ totalCollectedKobo: number | null; paymentCount: number }>();
+  return {
+    totalCollectedKobo: result?.totalCollectedKobo ?? 0,
+    paymentCount: result?.paymentCount ?? 0,
+  };
+}
+
+// ─── Party Position Queries ───────────────────────────────────────────────────
+
+export async function getPartyPositionsByStructure(
+  db: D1Database,
+  structureId: string,
+  tenantId: string
+): Promise<PartyPosition[]> {
+  const result = await db
+    .prepare("SELECT * FROM party_positions WHERE structureId = ? AND tenantId = ? AND deletedAt IS NULL ORDER BY title")
+    .bind(structureId, tenantId)
+    .all<PartyPosition>();
+  return result.results;
+}
+
+export async function createPartyPosition(
+  db: D1Database,
+  position: PartyPosition
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_positions
+        (id, tenantId, organizationId, structureId, title, holderId, electedDate,
+         expiresDate, isActive, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      position.id, position.tenantId, position.organizationId, position.structureId,
+      position.title, position.holderId ?? null, position.electedDate ?? null,
+      position.expiresDate ?? null, position.isActive ? 1 : 0,
+      position.createdAt, position.updatedAt
+    )
+    .run();
+}
+
+export async function updatePartyPosition(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  updates: Partial<PartyPosition>
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE party_positions SET
+        title = COALESCE(?, title),
+        holderId = COALESCE(?, holderId),
+        electedDate = COALESCE(?, electedDate),
+        expiresDate = COALESCE(?, expiresDate),
+        isActive = COALESCE(?, isActive),
+        updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(
+      updates.title ?? null, updates.holderId ?? null,
+      updates.electedDate ?? null, updates.expiresDate ?? null,
+      updates.isActive !== undefined ? (updates.isActive ? 1 : 0) : null,
+      Date.now(), id, tenantId
+    )
+    .run();
+}
+
+export async function softDeletePartyPosition(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  await db
+    .prepare("UPDATE party_positions SET deletedAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?")
+    .bind(Date.now(), Date.now(), id, tenantId)
+    .run();
+}
+
+// ─── Party Meeting Queries ────────────────────────────────────────────────────
+
+export async function getPartyMeetingsByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  structureId?: string
+): Promise<PartyMeeting[]> {
+  if (structureId) {
+    const result = await db
+      .prepare("SELECT * FROM party_meetings WHERE tenantId = ? AND organizationId = ? AND structureId = ? AND deletedAt IS NULL ORDER BY scheduledAt DESC")
+      .bind(tenantId, organizationId, structureId)
+      .all<PartyMeeting>();
+    return result.results;
+  }
+  const result = await db
+    .prepare("SELECT * FROM party_meetings WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL ORDER BY scheduledAt DESC")
+    .bind(tenantId, organizationId)
+    .all<PartyMeeting>();
+  return result.results;
+}
+
+export async function createPartyMeeting(
+  db: D1Database,
+  meeting: PartyMeeting
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_meetings
+        (id, tenantId, organizationId, structureId, title, meetingType, venue,
+         scheduledAt, minutesUrl, attendeeCount, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      meeting.id, meeting.tenantId, meeting.organizationId, meeting.structureId,
+      meeting.title, meeting.meetingType, meeting.venue ?? null,
+      meeting.scheduledAt, meeting.minutesUrl ?? null, meeting.attendeeCount ?? null,
+      meeting.createdAt, meeting.updatedAt
+    )
+    .run();
+}
+
+export async function updatePartyMeeting(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  updates: Partial<PartyMeeting>
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE party_meetings SET
+        title = COALESCE(?, title),
+        meetingType = COALESCE(?, meetingType),
+        venue = COALESCE(?, venue),
+        scheduledAt = COALESCE(?, scheduledAt),
+        minutesUrl = COALESCE(?, minutesUrl),
+        attendeeCount = COALESCE(?, attendeeCount),
+        updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(
+      updates.title ?? null, updates.meetingType ?? null, updates.venue ?? null,
+      updates.scheduledAt ?? null, updates.minutesUrl ?? null,
+      updates.attendeeCount ?? null, Date.now(), id, tenantId
+    )
+    .run();
+}
+
+export async function softDeletePartyMeeting(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  await db
+    .prepare("UPDATE party_meetings SET deletedAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?")
+    .bind(Date.now(), Date.now(), id, tenantId)
+    .run();
+}
+
+// ─── Party Announcement Queries ───────────────────────────────────────────────
+
+export async function getPartyAnnouncementsByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string
+): Promise<PartyAnnouncement[]> {
+  const result = await db
+    .prepare("SELECT * FROM party_announcements WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL ORDER BY createdAt DESC")
+    .bind(tenantId, organizationId)
+    .all<PartyAnnouncement>();
+  return result.results;
+}
+
+export async function createPartyAnnouncement(
+  db: D1Database,
+  announcement: PartyAnnouncement
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_announcements
+        (id, tenantId, organizationId, structureId, title, content, priority,
+         publishedAt, expiresAt, createdBy, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      announcement.id, announcement.tenantId, announcement.organizationId,
+      announcement.structureId ?? null, announcement.title, announcement.content,
+      announcement.priority, announcement.publishedAt ?? null,
+      announcement.expiresAt ?? null, announcement.createdBy,
+      announcement.createdAt, announcement.updatedAt
+    )
+    .run();
+}
+
+// ─── Party ID Card Queries ────────────────────────────────────────────────────
+
+export async function getPartyIdCardByMember(
+  db: D1Database,
+  memberId: string,
+  tenantId: string
+): Promise<PartyIdCard | null> {
+  return db
+    .prepare("SELECT * FROM party_id_cards WHERE memberId = ? AND tenantId = ? AND isActive = 1 AND deletedAt IS NULL LIMIT 1")
+    .bind(memberId, tenantId)
+    .first<PartyIdCard>();
+}
+
+export async function createPartyIdCard(
+  db: D1Database,
+  card: PartyIdCard
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_id_cards
+        (id, tenantId, organizationId, memberId, cardNumber, issuedAt, expiresAt,
+         cardImageUrl, isActive, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      card.id, card.tenantId, card.organizationId, card.memberId,
+      card.cardNumber, card.issuedAt, card.expiresAt ?? null,
+      card.cardImageUrl ?? null, card.isActive ? 1 : 0,
+      card.createdAt, card.updatedAt
+    )
+    .run();
+}
+
+export async function revokePartyIdCard(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  reason: string
+): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare(
+      "UPDATE party_id_cards SET isActive = 0, revokedAt = ?, revokedReason = ?, updatedAt = ? WHERE id = ? AND tenantId = ?"
+    )
+    .bind(now, reason, now, id, tenantId)
+    .run();
+}
+
+// ─── Party Dashboard Summary ──────────────────────────────────────────────────
+
+export async function getPartyDashboardSummary(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string
+): Promise<{
+  totalMembers: number;
+  activeMembers: number;
+  totalDuesCollectedKobo: number;
+  currentYearDuesKobo: number;
+  totalStructures: number;
+  upcomingMeetings: number;
+}> {
+  const currentYear = new Date().getFullYear();
+  const now = Date.now();
+  const batchResults = await db.batch([
+    db.prepare("SELECT COUNT(*) as count FROM party_members WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL").bind(tenantId, organizationId),
+    db.prepare("SELECT COUNT(*) as count FROM party_members WHERE tenantId = ? AND organizationId = ? AND memberStatus = 'active' AND deletedAt IS NULL").bind(tenantId, organizationId),
+    db.prepare("SELECT SUM(amountKobo) as total FROM party_dues WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL").bind(tenantId, organizationId),
+    db.prepare("SELECT SUM(amountKobo) as total FROM party_dues WHERE tenantId = ? AND organizationId = ? AND year = ? AND deletedAt IS NULL").bind(tenantId, organizationId, currentYear),
+    db.prepare("SELECT COUNT(*) as count FROM party_structures WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL").bind(tenantId, organizationId),
+    db.prepare("SELECT COUNT(*) as count FROM party_meetings WHERE tenantId = ? AND organizationId = ? AND scheduledAt > ? AND deletedAt IS NULL").bind(tenantId, organizationId, now),
+  ]);
+  return {
+    totalMembers: (batchResults[0]?.results[0] as { count: number })?.count ?? 0,
+    activeMembers: (batchResults[1]?.results[0] as { count: number })?.count ?? 0,
+    totalDuesCollectedKobo: (batchResults[2]?.results[0] as { total: number | null })?.total ?? 0,
+    currentYearDuesKobo: (batchResults[3]?.results[0] as { total: number | null })?.total ?? 0,
+    totalStructures: (batchResults[4]?.results[0] as { count: number })?.count ?? 0,
+    upcomingMeetings: (batchResults[5]?.results[0] as { count: number })?.count ?? 0,
+  };
+}
