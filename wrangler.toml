@@ -10,7 +10,7 @@ ENVIRONMENT = "development"
 [[d1_databases]]
 binding = "DB"
 database_name = "webwaka-civic-db"
-database_id = "79e62be1-38cd-44bc-8d85-df20a2918794"
+database_id = "5886cc88-b134-441f-9520-7cba3d6998c0"
 
 [[r2_buckets]]
 binding = "STORAGE"
@@ -34,7 +34,7 @@ ENVIRONMENT = "production"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "webwaka-civic-db"
-database_id = "79e62be1-38cd-44bc-8d85-df20a2918794"
+database_id = "5886cc88-b134-441f-9520-7cba3d6998c0"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"
@@ -52,7 +52,7 @@ ENVIRONMENT = "staging"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "webwaka-civic-db"
-database_id = "79e62be1-38cd-44bc-8d85-df20a2918794"
+database_id = "5886cc88-b134-441f-9520-7cba3d6998c0"
 
 [[env.staging.r2_buckets]]
 binding = "STORAGE"
