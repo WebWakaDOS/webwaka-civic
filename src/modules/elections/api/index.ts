@@ -132,7 +132,7 @@ async function logAuditEvent(
  * POST /api/elections
  * Create a new election
  */
-app.post("/api/elections", async (c) => {
+app.post("/", async (c) => {
   try {
     const { tenantId, name, electionType, position, nominationStartAt, nominationEndAt, votingStartAt, votingEndAt } = await c.req.json();
     
@@ -188,7 +188,7 @@ app.post("/api/elections", async (c) => {
  * GET /api/elections
  * List all elections for a tenant
  */
-app.get("/api/elections", async (c) => {
+app.get("/", async (c) => {
   try {
     const tenantId = c.req.query("tenantId");
     if (!tenantId) {
@@ -210,7 +210,7 @@ app.get("/api/elections", async (c) => {
  * GET /api/elections/:id
  * Get election details
  */
-app.get("/api/elections/:id", async (c) => {
+app.get("/:id", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -237,7 +237,7 @@ app.get("/api/elections/:id", async (c) => {
  * PATCH /api/elections/:id
  * Update election
  */
-app.patch("/api/elections/:id", async (c) => {
+app.patch("/:id", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -276,7 +276,7 @@ app.patch("/api/elections/:id", async (c) => {
  * POST /api/elections/:id/start-nomination
  * Start nomination period
  */
-app.post("/api/elections/:id/start-nomination", async (c) => {
+app.post("/:id/start-nomination", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -304,7 +304,7 @@ app.post("/api/elections/:id/start-nomination", async (c) => {
  * POST /api/elections/:id/start-voting
  * Start voting period
  */
-app.post("/api/elections/:id/start-voting", async (c) => {
+app.post("/:id/start-voting", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -332,7 +332,7 @@ app.post("/api/elections/:id/start-voting", async (c) => {
  * POST /api/elections/:id/announce-results
  * Announce results
  */
-app.post("/api/elections/:id/announce-results", async (c) => {
+app.post("/:id/announce-results", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -360,7 +360,7 @@ app.post("/api/elections/:id/announce-results", async (c) => {
  * DELETE /api/elections/:id
  * Soft delete election
  */
-app.delete("/api/elections/:id", async (c) => {
+app.delete("/:id", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -388,7 +388,7 @@ app.delete("/api/elections/:id", async (c) => {
  * POST /api/elections/:electionId/candidates
  * Nominate candidate
  */
-app.post("/api/elections/:electionId/candidates", async (c) => {
+app.post("/:electionId/candidates", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -453,7 +453,7 @@ app.post("/api/elections/:electionId/candidates", async (c) => {
  * GET /api/elections/:electionId/candidates
  * List candidates
  */
-app.get("/api/elections/:electionId/candidates", async (c) => {
+app.get("/:electionId/candidates", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -476,7 +476,7 @@ app.get("/api/elections/:electionId/candidates", async (c) => {
  * GET /api/elections/:electionId/candidates/:id
  * Get candidate details
  */
-app.get("/api/elections/:electionId/candidates/:id", async (c) => {
+app.get("/:electionId/candidates/:id", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -503,7 +503,7 @@ app.get("/api/elections/:electionId/candidates/:id", async (c) => {
  * PATCH /api/elections/:electionId/candidates/:id
  * Update candidate
  */
-app.patch("/api/elections/:electionId/candidates/:id", async (c) => {
+app.patch("/:electionId/candidates/:id", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -540,7 +540,7 @@ app.patch("/api/elections/:electionId/candidates/:id", async (c) => {
  * POST /api/elections/:electionId/candidates/:id/approve
  * Approve candidate
  */
-app.post("/api/elections/:electionId/candidates/:id/approve", async (c) => {
+app.post("/:electionId/candidates/:id/approve", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -568,7 +568,7 @@ app.post("/api/elections/:electionId/candidates/:id/approve", async (c) => {
  * DELETE /api/elections/:electionId/candidates/:id
  * Reject/withdraw candidate
  */
-app.delete("/api/elections/:electionId/candidates/:id", async (c) => {
+app.delete("/:electionId/candidates/:id", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -600,7 +600,7 @@ app.delete("/api/elections/:electionId/candidates/:id", async (c) => {
  * POST /api/elections/:electionId/voting-stations
  * Create voting station
  */
-app.post("/api/elections/:electionId/voting-stations", async (c) => {
+app.post("/:electionId/voting-stations", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -658,7 +658,7 @@ app.post("/api/elections/:electionId/voting-stations", async (c) => {
  * GET /api/elections/:electionId/voting-stations
  * List voting stations
  */
-app.get("/api/elections/:electionId/voting-stations", async (c) => {
+app.get("/:electionId/voting-stations", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -681,7 +681,7 @@ app.get("/api/elections/:electionId/voting-stations", async (c) => {
  * POST /api/elections/:electionId/cast-vote
  * Cast vote (with offline support)
  */
-app.post("/api/elections/:electionId/cast-vote", async (c) => {
+app.post("/:electionId/cast-vote", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -760,7 +760,7 @@ app.post("/api/elections/:electionId/cast-vote", async (c) => {
  * GET /api/elections/:electionId/vote-status
  * Check if voter has voted
  */
-app.get("/api/elections/:electionId/vote-status", async (c) => {
+app.get("/:electionId/vote-status", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -784,7 +784,7 @@ app.get("/api/elections/:electionId/vote-status", async (c) => {
  * POST /api/elections/:electionId/verify-vote
  * Verify vote (optional receipt)
  */
-app.post("/api/elections/:electionId/verify-vote", async (c) => {
+app.post("/:electionId/verify-vote", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -827,7 +827,7 @@ app.post("/api/elections/:electionId/verify-vote", async (c) => {
  * GET /api/elections/:electionId/votes/count
  * Get vote count (admin only)
  */
-app.get("/api/elections/:electionId/votes/count", async (c) => {
+app.get("/:electionId/votes/count", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -850,7 +850,7 @@ app.get("/api/elections/:electionId/votes/count", async (c) => {
  * POST /api/elections/:electionId/sync-votes
  * Sync votes from offline voting station
  */
-app.post("/api/elections/:electionId/sync-votes", async (c) => {
+app.post("/:electionId/sync-votes", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -925,7 +925,7 @@ app.post("/api/elections/:electionId/sync-votes", async (c) => {
  * GET /api/elections/:electionId/results
  * Get election results
  */
-app.get("/api/elections/:electionId/results", async (c) => {
+app.get("/:electionId/results", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -963,7 +963,7 @@ app.get("/api/elections/:electionId/results", async (c) => {
  * POST /api/elections/:electionId/volunteers
  * Register volunteer
  */
-app.post("/api/elections/:electionId/volunteers", async (c) => {
+app.post("/:electionId/volunteers", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1028,7 +1028,7 @@ app.post("/api/elections/:electionId/volunteers", async (c) => {
  * GET /api/elections/:electionId/volunteers
  * List volunteers
  */
-app.get("/api/elections/:electionId/volunteers", async (c) => {
+app.get("/:electionId/volunteers", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1051,7 +1051,7 @@ app.get("/api/elections/:electionId/volunteers", async (c) => {
  * GET /api/elections/:electionId/volunteers/:id
  * Get volunteer profile
  */
-app.get("/api/elections/:electionId/volunteers/:id", async (c) => {
+app.get("/:electionId/volunteers/:id", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1078,7 +1078,7 @@ app.get("/api/elections/:electionId/volunteers/:id", async (c) => {
  * PATCH /api/elections/:electionId/volunteers/:id
  * Update volunteer
  */
-app.patch("/api/elections/:electionId/volunteers/:id", async (c) => {
+app.patch("/:electionId/volunteers/:id", async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1113,7 +1113,7 @@ app.patch("/api/elections/:electionId/volunteers/:id", async (c) => {
  * POST /api/elections/:electionId/volunteers/:id/tasks
  * Assign task to volunteer
  */
-app.post("/api/elections/:electionId/volunteers/:id/tasks", async (c) => {
+app.post("/:electionId/volunteers/:id/tasks", async (c) => {
   try {
     const { electionId, id: volunteerId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1176,7 +1176,7 @@ app.post("/api/elections/:electionId/volunteers/:id/tasks", async (c) => {
  * GET /api/elections/:electionId/volunteers/:id/tasks
  * Get volunteer tasks
  */
-app.get("/api/elections/:electionId/volunteers/:id/tasks", async (c) => {
+app.get("/:electionId/volunteers/:id/tasks", async (c) => {
   try {
     const { electionId, id: volunteerId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1199,7 +1199,7 @@ app.get("/api/elections/:electionId/volunteers/:id/tasks", async (c) => {
  * PATCH /api/elections/:electionId/volunteers/:id/tasks/:taskId
  * Update task status
  */
-app.patch("/api/elections/:electionId/volunteers/:id/tasks/:taskId", async (c) => {
+app.patch("/:electionId/volunteers/:id/tasks/:taskId", async (c) => {
   try {
     const { electionId, id: volunteerId, taskId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1250,7 +1250,7 @@ app.patch("/api/elections/:electionId/volunteers/:id/tasks/:taskId", async (c) =
  * POST /api/elections/:electionId/donations
  * Record donation
  */
-app.post("/api/elections/:electionId/donations", async (c) => {
+app.post("/:electionId/donations", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1317,7 +1317,7 @@ app.post("/api/elections/:electionId/donations", async (c) => {
  * GET /api/elections/:electionId/donations
  * List donations
  */
-app.get("/api/elections/:electionId/donations", async (c) => {
+app.get("/:electionId/donations", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1340,7 +1340,7 @@ app.get("/api/elections/:electionId/donations", async (c) => {
  * GET /api/elections/:electionId/donations/summary
  * Donation summary
  */
-app.get("/api/elections/:electionId/donations/summary", async (c) => {
+app.get("/:electionId/donations/summary", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1368,7 +1368,7 @@ app.get("/api/elections/:electionId/donations/summary", async (c) => {
  * POST /api/elections/:electionId/expenses
  * Record expense
  */
-app.post("/api/elections/:electionId/expenses", async (c) => {
+app.post("/:electionId/expenses", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1429,7 +1429,7 @@ app.post("/api/elections/:electionId/expenses", async (c) => {
  * GET /api/elections/:electionId/expenses
  * List expenses
  */
-app.get("/api/elections/:electionId/expenses", async (c) => {
+app.get("/:electionId/expenses", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1452,7 +1452,7 @@ app.get("/api/elections/:electionId/expenses", async (c) => {
  * GET /api/elections/:electionId/expenses/summary
  * Expense summary
  */
-app.get("/api/elections/:electionId/expenses/summary", async (c) => {
+app.get("/:electionId/expenses/summary", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1480,7 +1480,7 @@ app.get("/api/elections/:electionId/expenses/summary", async (c) => {
  * PATCH /api/elections/:electionId/expenses/:id/approve
  * Approve expense
  */
-app.patch("/api/elections/:electionId/expenses/:id/approve", async (c) => {
+app.patch("/:electionId/expenses/:id/approve", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1511,7 +1511,7 @@ app.patch("/api/elections/:electionId/expenses/:id/approve", async (c) => {
  * GET /api/elections/:electionId/financial-report
  * INEC-compliant financial report
  */
-app.get("/api/elections/:electionId/financial-report", async (c) => {
+app.get("/:electionId/financial-report", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1544,7 +1544,7 @@ app.get("/api/elections/:electionId/financial-report", async (c) => {
  * POST /api/elections/:electionId/materials
  * Upload material
  */
-app.post("/api/elections/:electionId/materials", async (c) => {
+app.post("/:electionId/materials", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1604,7 +1604,7 @@ app.post("/api/elections/:electionId/materials", async (c) => {
  * GET /api/elections/:electionId/materials
  * List materials
  */
-app.get("/api/elections/:electionId/materials", async (c) => {
+app.get("/:electionId/materials", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1627,7 +1627,7 @@ app.get("/api/elections/:electionId/materials", async (c) => {
  * PATCH /api/elections/:electionId/materials/:id
  * Update material
  */
-app.patch("/api/elections/:electionId/materials/:id", async (c) => {
+app.patch("/:electionId/materials/:id", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1662,7 +1662,7 @@ app.patch("/api/elections/:electionId/materials/:id", async (c) => {
  * POST /api/elections/:electionId/materials/:id/publish
  * Publish material
  */
-app.post("/api/elections/:electionId/materials/:id/publish", async (c) => {
+app.post("/:electionId/materials/:id/publish", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1693,7 +1693,7 @@ app.post("/api/elections/:electionId/materials/:id/publish", async (c) => {
  * DELETE /api/elections/:electionId/materials/:id
  * Archive material
  */
-app.delete("/api/elections/:electionId/materials/:id", async (c) => {
+app.delete("/:electionId/materials/:id", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1720,7 +1720,7 @@ app.delete("/api/elections/:electionId/materials/:id", async (c) => {
  * POST /api/elections/:electionId/announcements
  * Create announcement
  */
-app.post("/api/elections/:electionId/announcements", async (c) => {
+app.post("/:electionId/announcements", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1779,7 +1779,7 @@ app.post("/api/elections/:electionId/announcements", async (c) => {
  * GET /api/elections/:electionId/announcements
  * List announcements
  */
-app.get("/api/elections/:electionId/announcements", async (c) => {
+app.get("/:electionId/announcements", async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1802,7 +1802,7 @@ app.get("/api/elections/:electionId/announcements", async (c) => {
  * DELETE /api/elections/:electionId/announcements/:id
  * Delete announcement
  */
-app.delete("/api/elections/:electionId/announcements/:id", async (c) => {
+app.delete("/:electionId/announcements/:id", async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1829,7 +1829,7 @@ app.delete("/api/elections/:electionId/announcements/:id", async (c) => {
  * POST /api/elections/sync/pull
  * Pull election data for offline
  */
-app.post("/api/elections/sync/pull", async (c) => {
+app.post("/sync/pull", async (c) => {
   try {
     const tenantId = c.req.query("tenantId");
     if (!tenantId) {
@@ -1869,7 +1869,7 @@ app.post("/api/elections/sync/pull", async (c) => {
  * GET /api/elections/health
  * Health check
  */
-app.get("/api/elections/health", async (c) => {
+app.get("/health", async (c) => {
   try {
     const result = await c.env.DB.prepare("SELECT 1").first();
     return c.json({
