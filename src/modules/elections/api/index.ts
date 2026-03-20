@@ -16,8 +16,9 @@
 
 import { Hono } from "hono";
 import { v4 as uuidv4 } from "uuid";
-import { logger } from "../../core/logger.ts";
-import { CIVIC_EVENTS } from "../../core/event-bus/index.ts";
+import { createLogger } from "../../../core/logger";
+const logger = createLogger("elections");
+import { CIVIC_EVENTS } from "../../../core/event-bus/index";
 import type {
   Election,
   Candidate,
@@ -40,7 +41,7 @@ import type {
   DonationStatus,
   MaterialStatus,
   ApprovalStatus,
-} from "../../core/db/schema.ts";
+} from "../../../core/db/schema";
 
 export interface ElectionsEnv {
   DB: D1Database;

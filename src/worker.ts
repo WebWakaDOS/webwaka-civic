@@ -17,15 +17,15 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger as honoLogger } from "hono/logger";
-import type { EventBusEnv } from "./core/event-bus/index.ts";
-import type { D1Database } from "./core/db/queries.ts";
+import type { EventBusEnv } from "./core/event-bus/index";
+import type { D1Database } from "./core/db/queries";
 
 // ─── Import module routers ─────────────────────────────────────────────────
-import churchNgoApp from "./modules/church-ngo/api/index.ts";
-import politicalPartyApp from "./modules/political-party/api/index.ts";
-import electionsApp from "./modules/elections/api/index.ts";
-import volunteersApp from "./modules/volunteers/api/index.ts";
-import fundraisingApp from "./modules/fundraising/api/index.ts";
+import churchNgoApp from "./modules/church-ngo/api/index";
+import politicalPartyApp from "./modules/political-party/api/index";
+import electionsApp from "./modules/elections/api/index";
+import volunteersApp from "./modules/volunteers/api/index";
+import fundraisingApp from "./modules/fundraising/api/index";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 interface Env extends EventBusEnv {

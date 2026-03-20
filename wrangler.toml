@@ -19,8 +19,8 @@ bucket_name = "webwaka-civic-storage"
 [assets]
 directory = "./dist"
 
-[build]
-command = "npm run build"
+# Build is handled separately for frontend (npm run build)
+# Worker is bundled directly by wrangler from src/worker.ts
 
 # ─── Production Environment ──────────────────────────────────────────────────
 [env.production]

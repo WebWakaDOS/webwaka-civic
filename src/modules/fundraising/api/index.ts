@@ -13,7 +13,7 @@
  */
 
 import { Hono } from "hono";
-import { createLogger } from "../../../core/logger.ts";
+import { createLogger } from "../../../core/logger";
 import { v4 as uuidv4 } from "uuid";
 
 const logger = createLogger("fundraising-routes");

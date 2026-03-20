@@ -11,8 +11,8 @@
  * Nigeria-First: INEC hierarchy, NDPR consent, NGN/kobo
  */
 import { Hono } from "hono";
-import { createEventBus, PARTY_EVENTS, type EventBusEnv } from "../../core/event-bus/index.ts";
-import { createLogger } from "../../core/logger.ts";
+import { createEventBus, PARTY_EVENTS, type EventBusEnv } from "../../../core/event-bus/index";
+import { createLogger } from "../../../core/logger";
 import {
   getPartyOrganizationByTenant,
   createPartyOrganization,
@@ -48,7 +48,7 @@ import {
   revokePartyIdCard,
   getPartyDashboardSummary,
   type D1Database,
-} from "../../core/db/queries.ts";
+} from "../../../core/db/queries";
 import type {
   PartyOrganization,
   PartyStructure,
@@ -58,8 +58,8 @@ import type {
   PartyMeeting,
   PartyAnnouncement,
   PartyIdCard,
-} from "../../core/db/schema.ts";
-import { PARTY_MIGRATION_SQL } from "../../core/db/schema.ts";
+} from "../../../core/db/schema";
+import { PARTY_MIGRATION_SQL } from "../../../core/db/schema";
 
 const logger = createLogger("political-party-api");
 

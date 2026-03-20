@@ -11,8 +11,8 @@
  */
 
 import { Hono } from "hono";
-import { createEventBus, type EventBusEnv } from "../../core/event-bus/index.ts";
-import { createLogger } from "../../core/logger.ts";
+import { createEventBus, type EventBusEnv } from "../../../core/event-bus/index";
+import { createLogger } from "../../../core/logger";
 import {
   createDonation,
   createEvent,
@@ -39,7 +39,7 @@ import {
   updateMember,
   updateOrganization,
   type D1Database,
-} from "../../core/db/queries.ts";
+} from "../../../core/db/queries";
 import type {
   CivicAttendance,
   CivicDonation,
@@ -47,8 +47,8 @@ import type {
   CivicGrant,
   CivicMember,
   CivicPledge,
-} from "../../core/db/schema.ts";
-import { MIGRATION_SQL } from "../../core/db/schema.ts";
+} from "../../../core/db/schema";
+import { MIGRATION_SQL } from "../../../core/db/schema";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
