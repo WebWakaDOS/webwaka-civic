@@ -17,7 +17,7 @@
  */
 
 import { Hono } from "hono";
-import { createLogger } from "../../../core/logger";
+import { createLogger } from "../../../core/logger.ts";
 import {
   createVoterSession,
   validateSessionToken,
@@ -25,7 +25,7 @@ import {
   enforceOneVotePerVoter,
   markVoterSessionVoted,
   extractVoterIdFromToken,
-} from "../sessionManager";
+} from "../sessionManager.ts";
 import {
   createBallot,
   getBallot,
@@ -42,7 +42,7 @@ import {
   getSyncQueueStats,
   getElectionConflicts,
   resolveConflict,
-} from "../offlineDb";
+} from "../offlineDb.ts";
 
 const logger = createLogger("voting-routes");
 const votingRouter = new Hono();

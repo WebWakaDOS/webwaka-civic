@@ -1,5 +1,5 @@
 name = "webwaka-civic"
-main = "src/modules/church-ngo/api/index.ts"
+main = "src/worker.ts"
 compatibility_date = "2024-12-05"
 compatibility_flags = ["nodejs_compat"]
 account_id = "a5f5864b726209519e0c361f2bb90e79"

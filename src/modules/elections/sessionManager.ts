@@ -24,7 +24,7 @@ import {
   checkDuplicateVote,
   SessionRecord,
   BallotRecord,
-} from "./offlineDb";
+} from "./offlineDb.ts";
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
