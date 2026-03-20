@@ -38,7 +38,27 @@ export type CivicEventType =
   | "party.id_card.issued"
   | "party.id_card.revoked"
   | "party.structure.created"
-  | "party.announcement.published";
+  | "party.announcement.published"
+  // CIV-3: Elections & Campaigns Events [Part 10.9]
+  | "election.created"
+  | "election.nomination_started"
+  | "election.voting_started"
+  | "election.results_announced"
+  | "election.closed"
+  | "candidate.nominated"
+  | "candidate.approved"
+  | "candidate.rejected"
+  | "vote.cast"
+  | "vote.verified"
+  | "volunteer.registered"
+  | "volunteer.task_assigned"
+  | "volunteer.task_completed"
+  | "donation.received"
+  | "donation.refunded"
+  | "expense.recorded"
+  | "expense.approved"
+  | "material.published"
+  | "announcement.posted";
 
 /**
  * CIVIC_EVENTS — named constants for all event types.
@@ -59,6 +79,26 @@ export const CIVIC_EVENTS = {
   EVENT_ATTENDANCE_RECORDED: "civic.event.attendance_recorded" as CivicEventType,
   GRANT_APPROVED: "civic.grant.approved" as CivicEventType,
   GRANT_DISBURSED: "civic.grant.disbursed" as CivicEventType,
+  // CIV-3: Elections & Campaigns Events
+  ELECTION_CREATED: "election.created" as CivicEventType,
+  ELECTION_NOMINATION_STARTED: "election.nomination_started" as CivicEventType,
+  ELECTION_VOTING_STARTED: "election.voting_started" as CivicEventType,
+  ELECTION_RESULTS_ANNOUNCED: "election.results_announced" as CivicEventType,
+  ELECTION_CLOSED: "election.closed" as CivicEventType,
+  CANDIDATE_NOMINATED: "candidate.nominated" as CivicEventType,
+  CANDIDATE_APPROVED: "candidate.approved" as CivicEventType,
+  CANDIDATE_REJECTED: "candidate.rejected" as CivicEventType,
+  VOTE_CAST: "vote.cast" as CivicEventType,
+  VOTE_VERIFIED: "vote.verified" as CivicEventType,
+  VOLUNTEER_REGISTERED: "volunteer.registered" as CivicEventType,
+  VOLUNTEER_TASK_ASSIGNED: "volunteer.task_assigned" as CivicEventType,
+  VOLUNTEER_TASK_COMPLETED: "volunteer.task_completed" as CivicEventType,
+  DONATION_RECEIVED_CAMPAIGN: "donation.received" as CivicEventType,
+  DONATION_REFUNDED: "donation.refunded" as CivicEventType,
+  EXPENSE_RECORDED: "expense.recorded" as CivicEventType,
+  EXPENSE_APPROVED: "expense.approved" as CivicEventType,
+  MATERIAL_PUBLISHED: "material.published" as CivicEventType,
+  ANNOUNCEMENT_POSTED: "announcement.posted" as CivicEventType,
 } as const;
 
 export interface CivicEvent {
