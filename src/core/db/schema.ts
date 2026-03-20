@@ -897,3 +897,291 @@ CREATE INDEX IF NOT EXISTS idx_party_cards_tenant ON party_id_cards(tenantId, or
 CREATE INDEX IF NOT EXISTS idx_party_cards_member ON party_id_cards(memberId);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_party_cards_number ON party_id_cards(tenantId, cardNumber) WHERE deletedAt IS NULL;
 `;
+
+
+// ─── CIV-3 Elections & Campaigns Types ──────────────────────────────────────────
+
+export type ElectionType = "primary" | "general" | "special";
+
+export type ElectionStatus = "draft" | "nomination" | "voting" | "results" | "closed";
+
+export type CandidateStatus = "nominated" | "approved" | "rejected" | "withdrawn";
+
+export type VotingStationStatus = "active" | "closed" | "offline";
+
+export type VolunteerStatus = "active" | "inactive" | "suspended";
+
+export type VolunteerTaskType = "canvassing" | "event" | "logistics" | "social_media" | "other";
+
+export type VolunteerTaskStatus = "assigned" | "in_progress" | "completed" | "cancelled";
+
+export type PaymentMethod = "paystack" | "flutterwave" | "bank_transfer" | "cash";
+
+export type DonationStatus = "pending" | "completed" | "failed" | "refunded";
+
+export type ExpenseCategory = "advertising" | "events" | "materials" | "logistics" | "staff" | "other";
+
+export type ApprovalStatus = "pending" | "approved" | "rejected";
+
+export type MaterialType = "poster" | "video" | "document" | "social_media" | "other";
+
+export type MaterialStatus = "draft" | "pending_review" | "approved" | "published" | "archived";
+
+export type AnnouncementType = "update" | "alert" | "schedule_change" | "result" | "other";
+
+export type AnnouncementPriority = "normal" | "urgent" | "critical";
+
+export type TargetAudience = "all" | "members" | "volunteers" | "donors";
+
+export type ResultStatus = "preliminary" | "final";
+
+export type MessageType = "text" | "task_update" | "system";
+
+export type AuditActionType = 
+  | "election_created"
+  | "election_updated"
+  | "nomination_started"
+  | "voting_started"
+  | "vote_cast"
+  | "result_announced"
+  | "volunteer_registered"
+  | "task_assigned"
+  | "donation_received"
+  | "material_published"
+  | "announcement_posted";
+
+// ─── CIV-3 Table Name Constants ─────────────────────────────────────────────────
+
+export const CIV3_TABLE_NAMES = {
+  ELECTIONS: "civic_elections",
+  CANDIDATES: "civic_candidates",
+  VOTES: "civic_votes",
+  VOTING_STATIONS: "civic_voting_stations",
+  VOLUNTEERS: "civic_volunteers",
+  VOLUNTEER_TASKS: "civic_volunteer_tasks",
+  CAMPAIGN_DONATIONS: "civic_campaign_donations",
+  CAMPAIGN_EXPENSES: "civic_campaign_expenses",
+  CAMPAIGN_MATERIALS: "civic_campaign_materials",
+  CAMPAIGN_ANNOUNCEMENTS: "civic_campaign_announcements",
+  ELECTION_RESULTS: "civic_election_results",
+  VOLUNTEER_MESSAGES: "civic_volunteer_messages",
+  ELECTION_AUDIT_LOGS: "civic_election_audit_logs",
+} as const;
+
+// ─── CIV-3 TypeScript Interfaces ────────────────────────────────────────────────
+
+export interface Election {
+  id: string;
+  tenantId: string;
+  name: string;
+  electionType: ElectionType;
+  position: string;
+  nominationStartAt: number;
+  nominationEndAt: number;
+  votingStartAt: number;
+  votingEndAt: number;
+  resultAnnouncementAt?: number;
+  status: ElectionStatus;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface Candidate {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  memberId: string;
+  name: string;
+  bio?: string;
+  manifestoUrl?: string;
+  photoUrl?: string;
+  nominatedBy: string;
+  nominationDate: number;
+  status: CandidateStatus;
+  voteCount: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface Vote {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  voterId: string;
+  candidateId: string;
+  votingStationId?: string;
+  encryptedVote: string;
+  verificationHash?: string;
+  castAt: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface VotingStation {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  name: string;
+  location: string;
+  latitude?: number;
+  longitude?: number;
+  capacity: number;
+  votesCount: number;
+  status: VotingStationStatus;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface Volunteer {
+  id: string;
+  tenantId: string;
+  memberId: string;
+  name: string;
+  phone: string;
+  email: string;
+  skills?: string;
+  availability?: string;
+  status: VolunteerStatus;
+  hoursLogged: number;
+  tasksCompleted: number;
+  points: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface VolunteerTask {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  volunteerId: string;
+  title: string;
+  description?: string;
+  taskType: VolunteerTaskType;
+  status: VolunteerTaskStatus;
+  dueDate?: number;
+  hoursEstimated?: number;
+  hoursLogged: number;
+  completedAt?: number;
+  feedback?: string;
+  rating?: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface CampaignDonation {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  donorId?: string;
+  amountKobo: number;
+  currency: string;
+  paymentMethod: PaymentMethod;
+  paymentRef?: string;
+  status: DonationStatus;
+  donorName: string;
+  donorEmail?: string;
+  donorPhone?: string;
+  receiptUrl?: string;
+  ndprConsent: boolean;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface CampaignExpense {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  category: ExpenseCategory;
+  description: string;
+  amountKobo: number;
+  currency: string;
+  expenseDate: number;
+  receipt?: string;
+  approvedBy?: string;
+  approvalStatus: ApprovalStatus;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface CampaignMaterial {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  title: string;
+  description?: string;
+  materialType: MaterialType;
+  contentUrl: string;
+  thumbnailUrl?: string;
+  status: MaterialStatus;
+  approvedBy?: string;
+  publishedAt?: number;
+  viewCount: number;
+  shareCount: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface CampaignAnnouncement {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  title: string;
+  content: string;
+  announcementType: AnnouncementType;
+  priority: AnnouncementPriority;
+  targetAudience: TargetAudience;
+  publishedAt: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface ElectionResult {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  candidateId: string;
+  totalVotes: number;
+  percentage: number;
+  rank: number;
+  status: ResultStatus;
+  announcedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface VolunteerMessage {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  senderId: string;
+  recipientId: string;
+  content: string;
+  messageType: MessageType;
+  readAt?: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface ElectionAuditLog {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  actionType: AuditActionType;
+  actorId?: string;
+  actorRole?: string;
+  details?: string;
+  ipAddress?: string;
+  createdAt: number;
+}
