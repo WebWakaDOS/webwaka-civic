@@ -1,15 +1,16 @@
 name = "webwaka-civic"
-main = "src/modules/church-ngo/api/index.ts"
+main = "src/worker.ts"
 compatibility_date = "2024-12-05"
 compatibility_flags = ["nodejs_compat"]
+account_id = "a5f5864b726209519e0c361f2bb90e79"
 
 [vars]
-ENVIRONMENT = "production"
+ENVIRONMENT = "development"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "webwaka-civic-db"
-database_id = "placeholder-replace-with-actual-id"
+database_id = "5886cc88-b134-441f-9520-7cba3d6998c0"
 
 [[r2_buckets]]
 binding = "STORAGE"
@@ -18,5 +19,41 @@ bucket_name = "webwaka-civic-storage"
 [assets]
 directory = "./dist"
 
-[build]
-command = "npm run build"
+# Build is handled separately for frontend (npm run build)
+# Worker is bundled directly by wrangler from src/worker.ts
+
+# ─── Production Environment ──────────────────────────────────────────────────
+[env.production]
+name = "webwaka-civic-api-prod"
+compatibility_date = "2024-12-05"
+compatibility_flags = ["nodejs_compat"]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "webwaka-civic-db"
+database_id = "5886cc88-b134-441f-9520-7cba3d6998c0"
+
+[[env.production.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "webwaka-civic-storage"
+
+# ─── Staging Environment ─────────────────────────────────────────────────────
+[env.staging]
+name = "webwaka-civic-api-staging"
+compatibility_date = "2024-12-05"
+compatibility_flags = ["nodejs_compat"]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "webwaka-civic-db"
+database_id = "5886cc88-b134-441f-9520-7cba3d6998c0"
+
+[[env.staging.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "webwaka-civic-storage"
