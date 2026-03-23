@@ -17,6 +17,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger as honoLogger } from "hono/logger";
+import { jwtAuthMiddleware, secureCORS } from "@webwaka/core";
 import type { EventBusEnv } from "./core/event-bus/index";
 import type { D1Database } from "./core/db/queries";
 
@@ -39,12 +40,14 @@ interface Env extends EventBusEnv {
 const app = new Hono<{ Bindings: Env }>();
 
 // CORS — allow all origins in staging, restrict in production
-app.use("*", cors({
-  origin: (origin) => origin,
-  allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization", "X-Tenant-ID"],
-  exposeHeaders: ["X-Request-ID"],
-  maxAge: 86400,
+app.use("*", secureCORS());
+
+
+// Global Auth Middleware
+app.use("/api/*", jwtAuthMiddleware({
+  publicRoutes: [
+    { method: "GET", path: "/api/elections/public" } // Example public route if needed
+  ]
 }));
 
 // Request logging
