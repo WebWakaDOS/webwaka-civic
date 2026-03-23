@@ -11,6 +11,7 @@
  */
 
 import { Hono } from "hono";
+import { emitEvent } from "@webwaka/core";
 import { createEventBus, type EventBusEnv } from "../../../core/event-bus/index";
 import { createLogger } from "../../../core/logger";
 import {
@@ -362,9 +363,9 @@ app.patch("/api/civic/members/:id", async (c) => {
     await updateMember(c.env.DB, c.req.param("id"), payload.tenantId, body);
 
     const eventBus = createEventBus(c.env);
-    await eventBus.publish("civic.member.updated", payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, "civic.member.updated", payload.tenantId, { organizationId: payload.organizationId, ...{
       memberId: c.req.param("id"),
-    });
+    } });
 
     logger.info("Member updated", { memberId: c.req.param("id") });
     return apiSuccess({ message: "Member updated" });
@@ -386,9 +387,9 @@ app.delete("/api/civic/members/:id", async (c) => {
     await softDeleteMember(c.env.DB, c.req.param("id"), payload.tenantId);
 
     const eventBus = createEventBus(c.env);
-    await eventBus.publish("civic.member.deactivated", payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, "civic.member.deactivated", payload.tenantId, { organizationId: payload.organizationId, ...{
       memberId: c.req.param("id"),
-    });
+    } });
 
     logger.info("Member soft-deleted", { memberId: c.req.param("id") });
     return apiSuccess({ message: "Member deactivated" });
@@ -506,12 +507,12 @@ app.post("/api/civic/donations", async (c) => {
     await createDonation(c.env.DB, donation);
 
     const eventBus = createEventBus(c.env);
-    await eventBus.publish("civic.donation.recorded", payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, "civic.donation.recorded", payload.tenantId, { organizationId: payload.organizationId, ...{
       donationId: donation.id,
       amountKobo: donation.amountKobo,
       donationType: donation.donationType,
       memberId: donation.memberId,
-    });
+    } });
 
     logger.info("Donation recorded", { donationId: donation.id, amountKobo: donation.amountKobo });
     return apiSuccess(donation);
@@ -579,11 +580,11 @@ app.post("/api/civic/pledges", async (c) => {
     await createPledge(c.env.DB, pledge);
 
     const eventBus = createEventBus(c.env);
-    await eventBus.publish("civic.pledge.created", payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, "civic.pledge.created", payload.tenantId, { organizationId: payload.organizationId, ...{
       pledgeId: pledge.id,
       memberId: pledge.memberId,
       totalAmountKobo: pledge.totalAmountKobo,
-    });
+    } });
 
     logger.info("Pledge created", { pledgeId: pledge.id });
     return apiSuccess(pledge);
@@ -623,12 +624,12 @@ app.post("/api/civic/pledges/:id/payment", async (c) => {
         ? "civic.pledge.fulfilled"
         : "civic.pledge.payment_recorded";
 
-    await eventBus.publish(eventType, payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, eventType, payload.tenantId, { organizationId: payload.organizationId, ...{
       pledgeId: updatedPledge.id,
       paymentKobo: body.amountKobo,
       paidAmountKobo: updatedPledge.paidAmountKobo,
       totalAmountKobo: updatedPledge.totalAmountKobo,
-    });
+    } });
 
     logger.info("Pledge payment recorded", {
       pledgeId: c.req.param("id"),
@@ -702,12 +703,12 @@ app.post("/api/civic/events", async (c) => {
     await createEvent(c.env.DB, event);
 
     const eventBus = createEventBus(c.env);
-    await eventBus.publish("civic.event.created", payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, "civic.event.created", payload.tenantId, { organizationId: payload.organizationId, ...{
       eventId: event.id,
       title: event.title,
       eventType: event.eventType,
       startTime: event.startTime,
-    });
+    } });
 
     logger.info("Event created", { eventId: event.id });
     return apiSuccess(event);
@@ -861,10 +862,10 @@ app.post("/api/civic/grants/:id/disburse", async (c) => {
     await disburseGrant(c.env.DB, c.req.param("id"), payload.tenantId, body.amountKobo);
 
     const eventBus = createEventBus(c.env);
-    await eventBus.publish("civic.grant.disbursed", payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, "civic.grant.disbursed", payload.tenantId, { organizationId: payload.organizationId, ...{
       grantId: c.req.param("id"),
       amountKobo: body.amountKobo,
-    });
+    } });
 
     logger.info("Grant disbursed", { grantId: c.req.param("id"), amountKobo: body.amountKobo });
     return apiSuccess({ message: "Grant disbursed" });
