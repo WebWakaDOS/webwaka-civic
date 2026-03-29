@@ -11,6 +11,7 @@
  * Nigeria-First: INEC hierarchy, NDPR consent, NGN/kobo
  */
 import { Hono } from "hono";
+import { emitEvent } from "@webwaka/core";
 import { createEventBus, PARTY_EVENTS, type EventBusEnv } from "../../../core/event-bus/index";
 import { createLogger } from "../../../core/logger";
 import {
@@ -354,11 +355,11 @@ app.post("/api/party/structures", async (c) => {
   };
   await createPartyStructure(c.env.DB, structure);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.STRUCTURE_CREATED, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.STRUCTURE_CREATED, payload.tenantId, { organizationId: payload.organizationId, ...{
     structureId: structure.id,
     level: structure.level,
     parentId: structure.parentId ?? null,
-  });
+  } });
   logger.info("Party structure created", { id: structure.id, level: structure.level, tenantId: payload.tenantId });
   return apiSuccess(structure);
 });
@@ -469,11 +470,11 @@ app.post("/api/party/members", async (c) => {
   };
   await createPartyMember(c.env.DB, member);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.MEMBER_REGISTERED, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.MEMBER_REGISTERED, payload.tenantId, { organizationId: payload.organizationId, ...{
     memberId: member.id,
     structureId: member.structureId,
     membershipNumber: member.membershipNumber,
-  });
+  } });
   logger.info("Party member registered", { id: member.id, membershipNumber, tenantId: payload.tenantId });
   return apiSuccess(member);
 });
@@ -489,16 +490,16 @@ app.patch("/api/party/members/:id", async (c) => {
   // Publish suspension/expulsion events
   if (body.memberStatus === "suspended") {
     const bus = createEventBus(c.env);
-    await bus.publish(PARTY_EVENTS.MEMBER_SUSPENDED, payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, PARTY_EVENTS.MEMBER_SUSPENDED, payload.tenantId, { organizationId: payload.organizationId, ...{
       memberId: id,
       reason: (body as Record<string, unknown>).reason ?? "Administrative action",
-    });
+    } });
   } else if (body.memberStatus === "expelled") {
     const bus = createEventBus(c.env);
-    await bus.publish(PARTY_EVENTS.MEMBER_EXPELLED, payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, PARTY_EVENTS.MEMBER_EXPELLED, payload.tenantId, { organizationId: payload.organizationId, ...{
       memberId: id,
       reason: (body as Record<string, unknown>).reason ?? "Administrative action",
-    });
+    } });
   }
   await updatePartyMember(c.env.DB, id, payload.tenantId, body);
   const updated = await getPartyMemberById(c.env.DB, id, payload.tenantId);
@@ -589,11 +590,11 @@ app.post("/api/party/dues", async (c) => {
   };
   await createPartyDues(c.env.DB, dues);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.DUES_PAID, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.DUES_PAID, payload.tenantId, { organizationId: payload.organizationId, ...{
     memberId: dues.memberId,
     year: dues.year,
     amountKobo: dues.amountKobo,
-  });
+  } });
   logger.info("Party dues recorded", { id: dues.id, memberId: dues.memberId, year: dues.year, tenantId: payload.tenantId });
   return apiSuccess(dues);
 });
@@ -663,11 +664,11 @@ app.post("/api/party/positions", async (c) => {
   await createPartyPosition(c.env.DB, position);
   if (position.holderId) {
     const bus = createEventBus(c.env);
-    await bus.publish(PARTY_EVENTS.POSITION_ASSIGNED, payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, PARTY_EVENTS.POSITION_ASSIGNED, payload.tenantId, { organizationId: payload.organizationId, ...{
       positionId: position.id,
       memberId: position.holderId,
       title: position.title,
-    });
+    } });
   }
   logger.info("Party position created", { id: position.id, title: position.title, tenantId: payload.tenantId });
   return apiSuccess(position);
@@ -684,11 +685,11 @@ app.patch("/api/party/positions/:id", async (c) => {
   await updatePartyPosition(c.env.DB, id, payload.tenantId, body);
   if (body.holderId) {
     const bus = createEventBus(c.env);
-    await bus.publish(PARTY_EVENTS.POSITION_ASSIGNED, payload.tenantId, payload.organizationId, {
+    await emitEvent(c.env, PARTY_EVENTS.POSITION_ASSIGNED, payload.tenantId, { organizationId: payload.organizationId, ...{
       positionId: id,
       memberId: body.holderId,
       title: body.title ?? "Position",
-    });
+    } });
   }
   return apiSuccess({ updated: true });
 });
@@ -745,11 +746,11 @@ app.post("/api/party/meetings", async (c) => {
   };
   await createPartyMeeting(c.env.DB, meeting);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.MEETING_SCHEDULED, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.MEETING_SCHEDULED, payload.tenantId, { organizationId: payload.organizationId, ...{
     meetingId: meeting.id,
     structureId: meeting.structureId,
     scheduledAt: meeting.scheduledAt,
-  });
+  } });
   logger.info("Party meeting scheduled", { id: meeting.id, title: meeting.title, tenantId: payload.tenantId });
   return apiSuccess(meeting);
 });
@@ -816,10 +817,10 @@ app.post("/api/party/announcements", async (c) => {
   };
   await createPartyAnnouncement(c.env.DB, announcement);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.ANNOUNCEMENT_PUBLISHED, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.ANNOUNCEMENT_PUBLISHED, payload.tenantId, { organizationId: payload.organizationId, ...{
     announcementId: announcement.id,
     priority: announcement.priority,
-  });
+  } });
   logger.info("Party announcement published", { id: announcement.id, priority: announcement.priority, tenantId: payload.tenantId });
   return apiSuccess(announcement);
 });
@@ -860,10 +861,10 @@ app.post("/api/party/id-cards", async (c) => {
   };
   await createPartyIdCard(c.env.DB, card);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.ID_CARD_ISSUED, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.ID_CARD_ISSUED, payload.tenantId, { organizationId: payload.organizationId, ...{
     memberId: card.memberId,
     cardNumber: card.cardNumber,
-  });
+  } });
   logger.info("Party ID card issued", { id: card.id, memberId: card.memberId, cardNumber, tenantId: payload.tenantId });
   return apiSuccess(card);
 });
@@ -881,10 +882,10 @@ app.patch("/api/party/id-cards/:id", async (c) => {
   }
   await revokePartyIdCard(c.env.DB, id, payload.tenantId, body.reason);
   const bus = createEventBus(c.env);
-  await bus.publish(PARTY_EVENTS.ID_CARD_REVOKED, payload.tenantId, payload.organizationId, {
+  await emitEvent(c.env, PARTY_EVENTS.ID_CARD_REVOKED, payload.tenantId, { organizationId: payload.organizationId, ...{
     cardId: id,
     reason: body.reason,
-  });
+  } });
   logger.info("Party ID card revoked", { id, reason: body.reason, tenantId: payload.tenantId });
   return apiSuccess({ revoked: true });
 });
