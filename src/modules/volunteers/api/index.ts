@@ -25,6 +25,7 @@
 import { Hono } from "hono";
 import { createLogger } from "../../../core/logger";
 import { v4 as uuidv4 } from "uuid";
+import { requireRole } from "@webwaka/core";
 
 const logger = createLogger("volunteer-routes");
 const volunteerRouter = new Hono();
@@ -277,7 +278,7 @@ volunteerRouter.patch("/elections/:electionId/volunteers/:volunteerId", async (c
 
 // ─── Endpoint 5: Create Task ────────────────────────────────────────────────
 
-volunteerRouter.post("/elections/:electionId/tasks", async (c) => {
+volunteerRouter.post("/elections/:electionId/tasks", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const electionId = c.req.param("electionId");
     const tenantId = c.req.header("x-tenant-id");
@@ -411,7 +412,7 @@ volunteerRouter.get("/elections/:electionId/tasks/:taskId", async (c) => {
 
 // ─── Endpoint 8: Assign Volunteer to Task ──────────────────────────────────
 
-volunteerRouter.post("/elections/:electionId/tasks/:taskId/assign", async (c) => {
+volunteerRouter.post("/elections/:electionId/tasks/:taskId/assign", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const electionId = c.req.param("electionId");
     const taskId = c.req.param("taskId");
@@ -671,7 +672,7 @@ volunteerRouter.get("/elections/:electionId/volunteers/:volunteerId/stats", asyn
 
 // ─── Endpoint 14: Award Badge ───────────────────────────────────────────────
 
-volunteerRouter.post("/elections/:electionId/volunteers/:volunteerId/badges", async (c) => {
+volunteerRouter.post("/elections/:electionId/volunteers/:volunteerId/badges", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const electionId = c.req.param("electionId");
     const volunteerId = c.req.param("volunteerId");

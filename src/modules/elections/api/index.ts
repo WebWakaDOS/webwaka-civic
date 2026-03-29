@@ -19,6 +19,7 @@ import { v4 as uuidv4 } from "uuid";
 import { createLogger } from "../../../core/logger";
 const logger = createLogger("elections");
 import { CIVIC_EVENTS } from "../../../core/event-bus/index";
+import { requireRole } from "@webwaka/core";
 import type {
   Election,
   Candidate,
@@ -130,9 +131,9 @@ async function logAuditEvent(
 
 /**
  * POST /api/elections
- * Create a new election
+ * Create a new election — requires campaign_manager role
  */
-app.post("/", async (c) => {
+app.post("/", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const { tenantId, name, electionType, position, nominationStartAt, nominationEndAt, votingStartAt, votingEndAt } = await c.req.json();
     
@@ -274,9 +275,9 @@ app.patch("/:id", async (c) => {
 
 /**
  * POST /api/elections/:id/start-nomination
- * Start nomination period
+ * Start nomination period — requires campaign_manager role
  */
-app.post("/:id/start-nomination", async (c) => {
+app.post("/:id/start-nomination", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -302,9 +303,9 @@ app.post("/:id/start-nomination", async (c) => {
 
 /**
  * POST /api/elections/:id/start-voting
- * Start voting period
+ * Start voting period — requires campaign_manager role
  */
-app.post("/:id/start-voting", async (c) => {
+app.post("/:id/start-voting", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -330,9 +331,9 @@ app.post("/:id/start-voting", async (c) => {
 
 /**
  * POST /api/elections/:id/announce-results
- * Announce results
+ * Announce results — requires campaign_manager role
  */
-app.post("/:id/announce-results", async (c) => {
+app.post("/:id/announce-results", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -358,9 +359,9 @@ app.post("/:id/announce-results", async (c) => {
 
 /**
  * DELETE /api/elections/:id
- * Soft delete election
+ * Soft delete election — requires campaign_manager role
  */
-app.delete("/:id", async (c) => {
+app.delete("/:id", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -538,9 +539,9 @@ app.patch("/:electionId/candidates/:id", async (c) => {
 
 /**
  * POST /api/elections/:electionId/candidates/:id/approve
- * Approve candidate
+ * Approve candidate — requires campaign_manager role
  */
-app.post("/:electionId/candidates/:id/approve", async (c) => {
+app.post("/:electionId/candidates/:id/approve", requireRole("campaign_manager", "super_admin"), async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1478,9 +1479,9 @@ app.get("/:electionId/expenses/summary", async (c) => {
 
 /**
  * PATCH /api/elections/:electionId/expenses/:id/approve
- * Approve expense
+ * Approve expense — requires campaign_manager or finance_officer role
  */
-app.patch("/:electionId/expenses/:id/approve", async (c) => {
+app.patch("/:electionId/expenses/:id/approve", requireRole("campaign_manager", "finance_officer", "super_admin"), async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1509,9 +1510,9 @@ app.patch("/:electionId/expenses/:id/approve", async (c) => {
 
 /**
  * GET /api/elections/:electionId/financial-report
- * INEC-compliant financial report
+ * INEC-compliant financial report — restricted to authorized roles (NDPR §2.1)
  */
-app.get("/:electionId/financial-report", async (c) => {
+app.get("/:electionId/financial-report", requireRole("campaign_manager", "finance_officer", "super_admin"), async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");

@@ -31,17 +31,47 @@ function verifyPaystackSignature(payload: string, signature: string, secret: str
 }
 
 /**
- * Generate Paystack payment link
+ * Generate Paystack payment link.
+ * IMPORTANT: amount MUST be an integer in kobo (smallest NGN unit).
+ * E.g., ₦5,000 → 500000 kobo. Never pass naira fractions.
  */
 async function generatePaystackLink(
-  amount: number,
+  amountKobo: number,
   email: string,
   reference: string,
   metadata: any,
   paystackKey: string
 ): Promise<string> {
-  // In production, call Paystack API
-  // For now, return mock URL
+  const intKobo = Math.round(amountKobo);
+
+  if (!paystackKey) {
+    return `https://checkout.paystack.com/pay/${reference}`;
+  }
+
+  try {
+    const response = await fetch("https://api.paystack.co/transaction/initialize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${paystackKey}`,
+      },
+      body: JSON.stringify({
+        amount: intKobo,
+        email,
+        reference,
+        metadata,
+        currency: "NGN",
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as { data?: { authorization_url?: string } };
+      return data?.data?.authorization_url ?? `https://checkout.paystack.com/pay/${reference}`;
+    }
+  } catch {
+    // Fallback on network error
+  }
+
   return `https://checkout.paystack.com/pay/${reference}`;
 }
 

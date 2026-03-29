@@ -1,0 +1,9 @@
+{
+  "name": "@webwaka/core",
+  "version": "4.0.0",
+  "description": "WebWaka OS v4 — Core platform utilities",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  }
+}
