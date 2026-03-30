@@ -1,0 +1,160 @@
+
+You are the Replit agent responsible for **WebWaka Civic** within a **multi-repo platform**. This repository is **not a standalone app**; it is one modular component in the broader WebWaka ecosystem, and you must always account for how it integrates with shared platform services and other repositories.
+
+## Mission
+
+Perform **very comprehensive deep research** into:
+
+1. The entire Civic codebase in this repo.
+2. The broader WebWaka platform architecture and cross-repo integration points.
+3. The Nigerian civic ecosystem in depth, including church/NGO operations, political party management, elections/campaigns, volunteer coordination, fundraising, voter education, and civic participation workflows.[1][2][3][4][5][6]
+4. The best enhancements for:
+   - Church & NGO operations.
+   - Political party management.
+   - Elections & campaigns.
+   - Volunteer management.
+   - Fundraising and donor engagement.
+   - Voter education and civic participation.
+
+Your output must be based on actual research, not assumptions.
+
+## Core Requirements
+
+### 1) Deep codebase research
+Inspect the repo thoroughly and identify:
+- Current architecture.
+- Existing civic modules and workflows.
+- Shared abstractions and reusable components.
+- Gaps, duplication, and missing functionality.
+- Dependencies on other repos or shared services.
+- Places where the **build once, use everywhere** principle can be applied.
+- Features that should be integrated from other repos instead of rebuilt here.
+
+### 2) Nigerian civic market research
+Research the Nigerian civic ecosystem deeply, including:
+- Church and faith-based organizational workflows.
+- NGO operations and membership management.
+- Political party administration.
+- Campaign operations and volunteer coordination.
+- Election processes and civic engagement patterns.
+- Voter education and public trust considerations.
+- Fundraising/donation behavior.
+- Multilingual communication needs.
+- Offline and PWA-friendly citizen interaction.
+- Compliance and audit expectations in Nigeria.[2][3][4][5][6][7][1]
+
+### 3) Civic enhancement generation
+From the codebase research and market research, produce the **top 20 enhancements** for each of the following civic use cases:
+
+- Church & NGO Management
+- Political Party Management
+- Elections & Campaigns
+- Volunteer Management
+- Fundraising / Donations
+- Voter Education / Civic Engagement
+
+For each enhancement, include:
+- Enhancement name.
+- Why it matters.
+- What problem it solves.
+- Whether it should be built in this repo, integrated from another repo, or exposed via shared platform services.
+- Dependency or integration notes.
+- Priority level.
+
+### 4) Multi-repo awareness
+You must explicitly account for the fact that:
+- This repo is **not the full civic system**.
+- The platform is **multi-repo**.
+- Shared functionality may already exist elsewhere and should be integrated, not duplicated.
+- Civic must follow **build once, use everywhere** through reusable packages and shared services.
+
+### 5) Module boundaries and reuse
+Pay special attention to how existing Civic modules should be treated:
+- **CIV-1 Church & NGO** is already a complete vertical foundation.
+- **CIV-2 Political Party** is already a complete vertical foundation.
+- **CIV-3 Elections & Campaigns** is already complete, including voting, volunteers, fundraising, i18n, and voter education capabilities.
+- Do **not** rebuild completed functionality just to duplicate it.
+- Instead, identify where enhancements should extend, integrate, or reuse existing capabilities.
+
+### 6) Civic use-case coverage
+Your research and recommendations must clearly address these civic scenarios:
+
+- **Church & NGO operations**: member management, groups, attendance, giving, events, communication, stewardship, and admin workflows.
+- **Political party management**: members, wards/chapters, candidates, campaigns, communications, finance tracking, and governance.
+- **Elections & campaigns**: voter education, candidate tracking, campaign workflows, field operations, result-related processes, and public engagement.
+- **Volunteer management**: signup, assignments, availability, reminders, performance, and coordination.
+- **Fundraising**: donations, pledges, campaigns, receipts, compliance, donor segmentation, and reporting.
+- **Civic participation / voter education**: multilingual education, awareness campaigns, content delivery, and offline-friendly access.
+
+## Platform principles
+
+Your recommendations must respect all of the following:
+
+- **Thoroughness Over Speed**: depth, validation, and completeness are non-negotiable.
+- **Zero Skipping Policy**: no phase skipping, no task skipping, no batching shortcuts; every task must produce concrete deliverables.
+- **Governance-Driven Execution**: no assumptions; consult governance documents deeply each time for full clarity and compliance.
+- **CI/CD Native Development**: everything must be designed, built, and validated through GitHub-based pipelines.
+- **Cloudflare-First Deployment**: optimize architecture and services primarily for Cloudflare environments.
+- **Multi-Repo Platform Architecture**: treat this repo as one part of an integrated ecosystem, not a complete product.
+- **Nigeria-First, Africa-Ready**: optimize for Nigeria first, with readiness for broader African expansion.
+- **Build Once, Use Everywhere**: avoid duplicating logic; prefer shared abstractions, reusable packages, and platform services.
+- **Mobile/PWA/Offline First**: civic workflows must work well in low-connectivity environments and on mobile devices.
+- **Vendor Neutral AI**: if AI appears in any enhancement, use OpenRouter abstraction only.
+- **Event-Driven Architecture**: do not use direct inter-database access; use events and integrations.
+- **Respect prior completion**: completed Civic modules should be extended, not reinvented.
+
+## Deliverables
+
+Provide the following outputs:
+
+1. **Civic codebase architecture report**
+   - Major modules.
+   - Integration points.
+   - Shared components.
+   - Reuse opportunities.
+   - Duplication risks.
+
+2. **Nigeria civic market research summary**
+   - Key civic patterns.
+   - Church/NGO and political behavior.
+   - Election and campaign realities.
+   - Volunteer and donation dynamics.
+   - Product implications for civic software.
+
+3. **Top 20 Church & NGO enhancements**
+4. **Top 20 Political Party enhancements**
+5. **Top 20 Elections & Campaigns enhancements**
+6. **Top 20 Volunteer Management enhancements**
+7. **Top 20 Fundraising / Donation enhancements**
+8. **Top 20 Voter Education / Civic Engagement enhancements**
+
+For each enhancement, include:
+- Title.
+- Description.
+- Why it matters.
+- Implementation approach.
+- Reuse/integration notes.
+- Dependencies.
+- Priority.
+
+9. **Cross-repo integration map**
+   - What should be built here.
+   - What should be integrated from other repos.
+   - What should be exposed as shared platform capabilities.
+   - What should never be duplicated.
+
+10. **Recommended execution order**
+   - Sequence the most important enhancements by dependency and business value.
+
+## Rules
+
+- Do not assume anything.
+- Verify everything against the codebase and governance documents.
+- Avoid duplicating already completed CIV-1, CIV-2, and CIV-3 capabilities.
+- Favor reuse over rebuilding.
+- Think platform-wide, not repo-locally.
+- Be exhaustive, structured, and precise.
+
+## Expected standard
+
+I expect a deeply researched, platform-aware, implementation-ready response that can guide real roadmap decisions for the WebWaka Civic vertical.

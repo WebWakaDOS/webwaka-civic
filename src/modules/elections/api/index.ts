@@ -19,6 +19,12 @@ import { v4 as uuidv4 } from "uuid";
 import { createLogger } from "../../../core/logger";
 const logger = createLogger("elections");
 import { CIVIC_EVENTS } from "../../../core/event-bus/index";
+import {
+  electionAuthMiddleware,
+  requireAdminOrManager,
+  requireAdmin,
+  requireElectionRole,
+} from "../../../core/rbac";
 import type {
   Election,
   Candidate,
@@ -42,14 +48,23 @@ import type {
   MaterialStatus,
   ApprovalStatus,
 } from "../../../core/db/schema";
+import type { D1Database } from "../../../core/db/queries";
 
 export interface ElectionsEnv {
   DB: D1Database;
+  JWT_SECRET: string;
   EVENT_BUS_URL?: string;
   EVENT_BUS_TOKEN?: string;
 }
 
 const app = new Hono<{ Bindings: ElectionsEnv }>();
+
+// ─── Auth Middleware ──────────────────────────────────────────────────────────
+// Health check is public; all other endpoints require a valid JWT.
+app.use("*", async (c, next) => {
+  if (c.req.path.endsWith("/health")) return next();
+  return electionAuthMiddleware()(c, next);
+});
 
 // ─── Utility Functions ──────────────────────────────────────────────────────────
 
@@ -132,7 +147,7 @@ async function logAuditEvent(
  * POST /api/elections
  * Create a new election
  */
-app.post("/", async (c) => {
+app.post("/", requireAdminOrManager, async (c) => {
   try {
     const { tenantId, name, electionType, position, nominationStartAt, nominationEndAt, votingStartAt, votingEndAt } = await c.req.json();
     
@@ -237,7 +252,7 @@ app.get("/:id", async (c) => {
  * PATCH /api/elections/:id
  * Update election
  */
-app.patch("/:id", async (c) => {
+app.patch("/:id", requireAdminOrManager, async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -276,7 +291,7 @@ app.patch("/:id", async (c) => {
  * POST /api/elections/:id/start-nomination
  * Start nomination period
  */
-app.post("/:id/start-nomination", async (c) => {
+app.post("/:id/start-nomination", requireAdminOrManager, async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -304,7 +319,7 @@ app.post("/:id/start-nomination", async (c) => {
  * POST /api/elections/:id/start-voting
  * Start voting period
  */
-app.post("/:id/start-voting", async (c) => {
+app.post("/:id/start-voting", requireAdminOrManager, async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -332,7 +347,7 @@ app.post("/:id/start-voting", async (c) => {
  * POST /api/elections/:id/announce-results
  * Announce results
  */
-app.post("/:id/announce-results", async (c) => {
+app.post("/:id/announce-results", requireAdminOrManager, async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -360,7 +375,7 @@ app.post("/:id/announce-results", async (c) => {
  * DELETE /api/elections/:id
  * Soft delete election
  */
-app.delete("/:id", async (c) => {
+app.delete("/:id", requireAdmin, async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -388,7 +403,7 @@ app.delete("/:id", async (c) => {
  * POST /api/elections/:electionId/candidates
  * Nominate candidate
  */
-app.post("/:electionId/candidates", async (c) => {
+app.post("/:electionId/candidates", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -503,7 +518,7 @@ app.get("/:electionId/candidates/:id", async (c) => {
  * PATCH /api/elections/:electionId/candidates/:id
  * Update candidate
  */
-app.patch("/:electionId/candidates/:id", async (c) => {
+app.patch("/:electionId/candidates/:id", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -540,7 +555,7 @@ app.patch("/:electionId/candidates/:id", async (c) => {
  * POST /api/elections/:electionId/candidates/:id/approve
  * Approve candidate
  */
-app.post("/:electionId/candidates/:id/approve", async (c) => {
+app.post("/:electionId/candidates/:id/approve", requireAdmin, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -568,7 +583,7 @@ app.post("/:electionId/candidates/:id/approve", async (c) => {
  * DELETE /api/elections/:electionId/candidates/:id
  * Reject/withdraw candidate
  */
-app.delete("/:electionId/candidates/:id", async (c) => {
+app.delete("/:electionId/candidates/:id", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -600,7 +615,7 @@ app.delete("/:electionId/candidates/:id", async (c) => {
  * POST /api/elections/:electionId/voting-stations
  * Create voting station
  */
-app.post("/:electionId/voting-stations", async (c) => {
+app.post("/:electionId/voting-stations", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -681,7 +696,7 @@ app.get("/:electionId/voting-stations", async (c) => {
  * POST /api/elections/:electionId/cast-vote
  * Cast vote (with offline support)
  */
-app.post("/:electionId/cast-vote", async (c) => {
+app.post("/:electionId/cast-vote", requireElectionRole(["admin", "campaign_manager", "voter"]), async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -827,7 +842,7 @@ app.post("/:electionId/verify-vote", async (c) => {
  * GET /api/elections/:electionId/votes/count
  * Get vote count (admin only)
  */
-app.get("/:electionId/votes/count", async (c) => {
+app.get("/:electionId/votes/count", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -850,7 +865,7 @@ app.get("/:electionId/votes/count", async (c) => {
  * POST /api/elections/:electionId/sync-votes
  * Sync votes from offline voting station
  */
-app.post("/:electionId/sync-votes", async (c) => {
+app.post("/:electionId/sync-votes", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -963,7 +978,7 @@ app.get("/:electionId/results", async (c) => {
  * POST /api/elections/:electionId/volunteers
  * Register volunteer
  */
-app.post("/:electionId/volunteers", async (c) => {
+app.post("/:electionId/volunteers", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1078,7 +1093,7 @@ app.get("/:electionId/volunteers/:id", async (c) => {
  * PATCH /api/elections/:electionId/volunteers/:id
  * Update volunteer
  */
-app.patch("/:electionId/volunteers/:id", async (c) => {
+app.patch("/:electionId/volunteers/:id", requireAdminOrManager, async (c) => {
   try {
     const { id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1113,7 +1128,7 @@ app.patch("/:electionId/volunteers/:id", async (c) => {
  * POST /api/elections/:electionId/volunteers/:id/tasks
  * Assign task to volunteer
  */
-app.post("/:electionId/volunteers/:id/tasks", async (c) => {
+app.post("/:electionId/volunteers/:id/tasks", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id: volunteerId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1199,7 +1214,7 @@ app.get("/:electionId/volunteers/:id/tasks", async (c) => {
  * PATCH /api/elections/:electionId/volunteers/:id/tasks/:taskId
  * Update task status
  */
-app.patch("/:electionId/volunteers/:id/tasks/:taskId", async (c) => {
+app.patch("/:electionId/volunteers/:id/tasks/:taskId", requireElectionRole(["admin", "campaign_manager", "volunteer"]), async (c) => {
   try {
     const { electionId, id: volunteerId, taskId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1250,7 +1265,7 @@ app.patch("/:electionId/volunteers/:id/tasks/:taskId", async (c) => {
  * POST /api/elections/:electionId/donations
  * Record donation
  */
-app.post("/:electionId/donations", async (c) => {
+app.post("/:electionId/donations", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1368,7 +1383,7 @@ app.get("/:electionId/donations/summary", async (c) => {
  * POST /api/elections/:electionId/expenses
  * Record expense
  */
-app.post("/:electionId/expenses", async (c) => {
+app.post("/:electionId/expenses", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1480,7 +1495,7 @@ app.get("/:electionId/expenses/summary", async (c) => {
  * PATCH /api/elections/:electionId/expenses/:id/approve
  * Approve expense
  */
-app.patch("/:electionId/expenses/:id/approve", async (c) => {
+app.patch("/:electionId/expenses/:id/approve", requireAdmin, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1544,7 +1559,7 @@ app.get("/:electionId/financial-report", async (c) => {
  * POST /api/elections/:electionId/materials
  * Upload material
  */
-app.post("/:electionId/materials", async (c) => {
+app.post("/:electionId/materials", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1627,7 +1642,7 @@ app.get("/:electionId/materials", async (c) => {
  * PATCH /api/elections/:electionId/materials/:id
  * Update material
  */
-app.patch("/:electionId/materials/:id", async (c) => {
+app.patch("/:electionId/materials/:id", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1662,7 +1677,7 @@ app.patch("/:electionId/materials/:id", async (c) => {
  * POST /api/elections/:electionId/materials/:id/publish
  * Publish material
  */
-app.post("/:electionId/materials/:id/publish", async (c) => {
+app.post("/:electionId/materials/:id/publish", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1693,7 +1708,7 @@ app.post("/:electionId/materials/:id/publish", async (c) => {
  * DELETE /api/elections/:electionId/materials/:id
  * Archive material
  */
-app.delete("/:electionId/materials/:id", async (c) => {
+app.delete("/:electionId/materials/:id", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1720,7 +1735,7 @@ app.delete("/:electionId/materials/:id", async (c) => {
  * POST /api/elections/:electionId/announcements
  * Create announcement
  */
-app.post("/:electionId/announcements", async (c) => {
+app.post("/:electionId/announcements", requireAdminOrManager, async (c) => {
   try {
     const { electionId } = c.req.param();
     const tenantId = c.req.query("tenantId");
@@ -1802,7 +1817,7 @@ app.get("/:electionId/announcements", async (c) => {
  * DELETE /api/elections/:electionId/announcements/:id
  * Delete announcement
  */
-app.delete("/:electionId/announcements/:id", async (c) => {
+app.delete("/:electionId/announcements/:id", requireAdminOrManager, async (c) => {
   try {
     const { electionId, id } = c.req.param();
     const tenantId = c.req.query("tenantId");

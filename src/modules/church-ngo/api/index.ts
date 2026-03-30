@@ -722,6 +722,10 @@ app.post("/api/civic/events/:id/attendance", async (c) => {
   const payload = c.get("jwtPayload" as never) as JWTPayload;
   const logger = createLogger("attendance", payload.tenantId);
 
+  if (payload.role !== "admin" && payload.role !== "leader") {
+    return apiError("Forbidden — admin or leader role required", 403);
+  }
+
   try {
     const body = await c.req.json<{ memberId?: string; guestName?: string }>();
 

@@ -60,6 +60,30 @@ npm test
 - **Output directory**: `dist/`
 - The Cloudflare Workers backend must be deployed separately via `wrangler deploy`.
 
+## RBAC Architecture
+
+### Shared RBAC module — `src/core/rbac.ts`
+Provides reusable JWT verification and role-guard middleware for CIV-3 (Elections & Campaigns):
+- **Roles**: `admin | campaign_manager | candidate | voter | volunteer`
+- `electionAuthMiddleware()` — verifies HS256 Bearer JWT, stores payload in Hono context
+- `requireElectionRole(allowedRoles)` — route-level middleware; returns 403 if role not in list
+- Shorthand exports: `requireAdmin`, `requireAdminOrManager`
+
+### Module RBAC coverage
+| Module | Auth | Role Guards |
+|--------|------|-------------|
+| `church-ngo` | JWT middleware on `*` | Inline `payload.role` checks on all mutations + attendance |
+| `political-party` | JWT middleware on `*` | Inline `payload.role` checks on all mutations |
+| `elections` | JWT middleware via `electionAuthMiddleware` (health exempt) | `requireAdmin` / `requireAdminOrManager` / `requireElectionRole` on all 26 mutation endpoints |
+| `volunteers` | JWT middleware via `electionAuthMiddleware` (health exempt) | `requireAdminOrManager` on create/update/assign/badge; `requireElectionRole(["admin","campaign_manager","volunteer"])` on accept/complete |
+
+### Role-to-endpoint matrix (elections)
+- **admin only**: delete election, approve candidate, approve expense
+- **admin + campaign_manager**: create/update election, state transitions, nominate candidate, create voting station, all finance, all materials, all announcements, register/update volunteer, create/assign task
+- **admin + campaign_manager + voter**: cast vote
+- **admin + campaign_manager + volunteer**: update task status
+- **authenticated (any)**: all reads, verify vote, sync pull
+
 ## Key Features
 - Mobile-first, offline-first PWA
 - Multi-tenancy (every record includes `tenantId`)
