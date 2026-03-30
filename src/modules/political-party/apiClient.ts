@@ -17,7 +17,24 @@ import type {
   PartyMeeting,
   PartyAnnouncement,
   PartyIdCard,
+  PartyNomination,
+  PartyCampaignAccount,
+  PartyCampaignTransaction,
 } from "../../core/db/schema.ts";
+
+export type { PartyNomination, PartyCampaignAccount, PartyCampaignTransaction };
+
+export interface PartyCampaignSummary {
+  accountId: string;
+  positionLevel: string;
+  limitKobo: number;
+  totalIncomeKobo: number;
+  totalExpenditureKobo: number;
+  balanceKobo: number;
+  expenditurePercent: number;
+  withinLimit: boolean;
+  transactions: PartyCampaignTransaction[];
+}
 
 // ─── API Response Types ───────────────────────────────────────────────────────
 
@@ -286,6 +303,62 @@ export class PartyApiClient {
     return this.request<{ revoked: boolean }>("PATCH", `/api/party/id-cards/${id}`, { reason });
   }
 
+  // ─── Nominations ────────────────────────────────────────────────────────────
+
+  async getNominations(status?: string): Promise<ApiResponse<{ nominations: PartyNomination[]; total: number }>> {
+    return this.request("GET", "/api/party/nominations", undefined, status ? { status } : {});
+  }
+
+  async createNomination(data: {
+    memberId: string;
+    position: string;
+    constituency?: string;
+    statementOfIntent?: string;
+  }): Promise<ApiResponse<PartyNomination>> {
+    return this.request("POST", "/api/party/nominations", data);
+  }
+
+  async approveNomination(id: string, vettingNotes?: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request("PATCH", `/api/party/nominations/${id}/approve`, { vettingNotes });
+  }
+
+  async rejectNomination(id: string, vettingNotes: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request("PATCH", `/api/party/nominations/${id}/reject`, { vettingNotes });
+  }
+
+  async submitNomination(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request("PATCH", `/api/party/nominations/${id}/submit`, {});
+  }
+
+  // ─── Campaign Finance ────────────────────────────────────────────────────────
+
+  async getCampaignAccounts(): Promise<ApiResponse<{ accounts: PartyCampaignAccount[] }>> {
+    return this.request("GET", "/api/party/campaign-finance");
+  }
+
+  async createCampaignAccount(data: {
+    memberId: string;
+    position: string;
+    positionLevel: string;
+    constituency?: string;
+  }): Promise<ApiResponse<PartyCampaignAccount>> {
+    return this.request("POST", "/api/party/campaign-finance", data);
+  }
+
+  async getCampaignSummary(id: string): Promise<ApiResponse<PartyCampaignSummary>> {
+    return this.request("GET", `/api/party/campaign-finance/${id}/summary`);
+  }
+
+  async addCampaignTransaction(id: string, data: {
+    type: "income" | "expenditure";
+    category: string;
+    description: string;
+    amountKobo: number;
+    evidenceUrl?: string;
+  }): Promise<ApiResponse<{ id: string }>> {
+    return this.request("POST", `/api/party/campaign-finance/${id}/transactions`, data);
+  }
+
   // ─── Sync ───────────────────────────────────────────────────────────────────
 
   async syncPull(since: number): Promise<ApiResponse<PartySyncPullResponse>> {
@@ -305,6 +378,10 @@ export class PartyApiClient {
 
   async health(): Promise<ApiResponse<{ module: string; version: string; timestamp: string }>> {
     return this.request("GET", "/api/party/health");
+  }
+
+  async migrate(): Promise<ApiResponse<{ applied: number; message: string }>> {
+    return this.request("POST", "/api/party/migrate", {});
   }
 }
 

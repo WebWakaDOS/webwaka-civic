@@ -24,6 +24,8 @@ export interface PartyTranslations {
     idCards: string;
     announcements: string;
     positions: string;
+    nominations: string;
+    campaignFinance: string;
   };
   dashboard: {
     title: string;
@@ -205,6 +207,8 @@ const en: PartyTranslations = {
     idCards: "ID Cards",
     announcements: "Announcements",
     positions: "Positions",
+    nominations: "Nominations",
+    campaignFinance: "Finance",
   },
   dashboard: {
     title: "Party Dashboard",
@@ -386,6 +390,8 @@ const yo: PartyTranslations = {
     idCards: "Kaadi Idanimọ",
     announcements: "Awọn Ikede",
     positions: "Awọn Ipo",
+    nominations: "Awọn Yiyan",
+    campaignFinance: "Owó Ìdibo",
   },
   dashboard: {
     title: "Iwe Akọọlẹ Ẹgbẹ",
@@ -567,6 +573,8 @@ const ig: PartyTranslations = {
     idCards: "Kaadị Njirimara",
     announcements: "Ọkwa",
     positions: "Ọkwa Ọrụ",
+    nominations: "Nhọrọ Onye",
+    campaignFinance: "Ego Mkpọsa",
   },
   dashboard: {
     title: "Ihe Nlele Otu",
@@ -748,6 +756,8 @@ const ha: PartyTranslations = {
     idCards: "Katin Shaida",
     announcements: "Sanarwa",
     positions: "Mukamai",
+    nominations: "Zaɓe",
+    campaignFinance: "Kuɗin Yaƙi",
   },
   dashboard: {
     title: "Allon Sarrafa Ƙungiya",

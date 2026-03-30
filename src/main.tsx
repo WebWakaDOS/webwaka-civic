@@ -5,7 +5,16 @@
 
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { ChurchNGOApp } from "./modules/church-ngo/ui";
+import App from "./App";
+
+// Register service worker
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("SW registration failed:", err);
+    });
+  });
+}
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -15,6 +24,6 @@ if (!rootElement) {
 const root = createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <ChurchNGOApp />
+    <App />
   </React.StrictMode>
 );

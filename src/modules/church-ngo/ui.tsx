@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useReducer, useState } from "react";
-import { apiDelete, apiGet, apiPatch, apiPost } from "./apiClient";
+import { apiDelete, apiGet, apiPatch, apiPost, runMigrations } from "./apiClient";
 import { DEFAULT_LANGUAGE, getSupportedLanguages, getTranslations, type Language } from "./i18n";
 import { CivicOfflineDb, createSyncEngine } from "../../core/sync/client";
 import {
@@ -476,6 +476,16 @@ function DashboardPage({
   t: ReturnType<typeof getTranslations>;
 }) {
   const stats = state.dashboardStats;
+  const [migrateResult, setMigrateResult] = useState<string | null>(null);
+  const [migrateRunning, setMigrateRunning] = useState(false);
+
+  const handleMigrate = async () => {
+    setMigrateRunning(true);
+    setMigrateResult(null);
+    const res = await runMigrations();
+    setMigrateRunning(false);
+    setMigrateResult(res.success ? `✓ Migration complete (${res.data?.applied ?? 0} applied)` : `✗ ${res.error}`);
+  };
 
   return (
     <div>
@@ -534,6 +544,30 @@ function DashboardPage({
             </div>
           ))
         )}
+      </div>
+
+      {/* Admin Tools */}
+      <div style={{ marginTop: "16px", backgroundColor: colors.surfaceAlt, borderRadius: "12px", padding: "16px", border: `1px solid ${colors.border}` }}>
+        <details>
+          <summary style={{ fontSize: "13px", fontWeight: 600, color: colors.textMuted, cursor: "pointer", userSelect: "none" }}>⚙️ Admin Tools</summary>
+          <div style={{ marginTop: "12px" }}>
+            {migrateResult && (
+              <div style={{ padding: "8px 12px", borderRadius: "8px", backgroundColor: migrateResult.startsWith("✓") ? "#D1FAE5" : "#FEE2E2", color: migrateResult.startsWith("✓") ? colors.success : colors.error, fontSize: "13px", marginBottom: "10px" }}>
+                {migrateResult}
+              </div>
+            )}
+            <button
+              onClick={handleMigrate}
+              disabled={migrateRunning}
+              style={{ padding: "10px 18px", backgroundColor: colors.primary, color: "#fff", border: "none", borderRadius: "8px", cursor: migrateRunning ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 600, opacity: migrateRunning ? 0.7 : 1 }}
+            >
+              {migrateRunning ? "Running…" : "🗄️ Run DB Migrations"}
+            </button>
+            <p style={{ fontSize: "12px", color: colors.textMuted, margin: "8px 0 0" }}>
+              Bootstrap or upgrade this tenant's database tables. Safe to run multiple times.
+            </p>
+          </div>
+        </details>
       </div>
     </div>
   );

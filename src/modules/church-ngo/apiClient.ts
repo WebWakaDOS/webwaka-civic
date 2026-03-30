@@ -50,3 +50,7 @@ export function apiPatch<T>(path: string, body: unknown): Promise<ApiResponse<T>
 export function apiDelete<T>(path: string): Promise<ApiResponse<T>> {
   return apiRequest<T>(path, { method: "DELETE" });
 }
+
+export function runMigrations(): Promise<ApiResponse<{ applied: number; message: string }>> {
+  return apiRequest("/migrate", { method: "POST", body: JSON.stringify({}) });
+}

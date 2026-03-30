@@ -38,6 +38,53 @@ migrations/             # D1 SQL migrations
 public/                 # Static assets, PWA manifest, service worker
 ```
 
+## Phase 4 — Unified Frontend & CIV-3 Module UI — COMPLETED (Weeks 19–24)
+
+### T001: Unified App Shell (`src/App.tsx`)
+- Module-selector landing page with three module cards: Church/NGO, Political Party, Elections & Campaigns
+- Each card prompts Tenant ID + JWT (sessionStorage keyed per module: `webwaka_token`, `webwaka_party_token`, `webwaka_election_token`)
+- Language selector (EN/YO/IG/HA) persisted to localStorage; global OfflineSyncBanner
+- `src/main.tsx` updated to render `<App />` as unified entry point
+
+### T002: OfflineSyncBanner (`src/components/shared/OfflineSyncBanner.tsx`)
+- Listens to SW postMessages: `MUTATION_QUEUED`, `SYNC_COMPLETE`, `QUEUE_COUNT`
+- States: offline + N queued, syncing, synced; used by all three module shells
+
+### T003: CIV-3 Elections Module UI (`src/modules/elections/ui.tsx` + `apiClient.ts`)
+- Pages: dashboard, election-list, election-detail, nominations, voting, results-collation, public-results, volunteers, fundraising, admin/migrate
+- Typed API client (`src/modules/elections/apiClient.ts`) wired to all CIV-3 endpoints
+- AdminPage: "Run Migrations" button calls `POST /api/elections/:id/migrate`
+
+### T004: CIV-2 Nominations & Campaign Finance screens (`src/modules/political-party/ui.tsx`)
+- New `Page` types: `nominations`, `nomination-create`, `nomination-detail`, `campaign-finance`, `finance-account-create`, `finance-transactions`
+- `NominationsPage`: filterable list, inline approve/reject (with notes modal) + submit to INEC buttons
+- `NominationCreatePage`: form for memberId, position, constituency, statement of intent
+- `NominationDetailPage`: full detail with approve/reject/submit actions
+- `CampaignFinancePage`: accounts list with Electoral Act limit display
+- `FinanceAccountCreatePage`: create account with position level selector + limit preview
+- `FinanceTransactionsPage`: income/expenditure log with progress bar vs. Electoral Act limit, ≥80% warning
+- Bottom nav extended: 📋 Nominations, 💳 Finance
+- i18n keys added: `nav.nominations`, `nav.campaignFinance` in all 4 locales (en/yo/ig/ha)
+- API client extended: `getNominations`, `createNomination`, `approveNomination`, `rejectNomination`, `submitNomination`, `getCampaignAccounts`, `createCampaignAccount`, `getCampaignSummary`, `addCampaignTransaction`
+
+### T005: D1 Migration Bootstrap UI
+- Church/NGO: collapsible "⚙️ Admin Tools" section in dashboard, calls `POST /api/civic/migrate`
+- Political Party: collapsible `AdminMigrateCard` component in dashboard, calls `POST /api/party/migrate`
+- Elections: dedicated Admin page (already existed) with `POST /api/elections/:id/migrate`
+- All show inline ✓/✗ result with applied-migration count; idempotent
+
+### T007: Build Verification
+- `tsc -p tsconfig.build.json && vite build` → **0 TS errors, 0 Vite errors**
+- Bundle: 411 KB raw / 120 KB gzip
+
+---
+
+## Phase 3 — Offline-First Infrastructure — COMPLETED (Weeks 15–18)
+- Service Worker: full IndexedDB mutation queue + BackgroundSync replay
+- Phase 3 keys added to all 4 i18n locale files
+
+---
+
 ## Phase 2 — Core Platform Gaps — COMPLETED (Weeks 9–14)
 
 ### T001: E03 — NotificationService wired into Church-NGO

@@ -20,7 +20,7 @@
  * 6. ID Cards — issue, view, revoke
  */
 import React, { useCallback, useEffect, useReducer, useState } from "react";
-import { createPartyApiClient, type PartyMemberFilters } from "./apiClient";
+import { createPartyApiClient, type PartyMemberFilters, type PartyNomination, type PartyCampaignAccount, type PartyCampaignSummary } from "./apiClient";
 import { getPartyTranslations, LOCALE_NAMES, SUPPORTED_LOCALES, type PartyLocale } from "./i18n";
 import {
   formatWATDate,
@@ -57,7 +57,13 @@ type Page =
   | "meetings"
   | "meeting-create"
   | "id-cards"
-  | "id-card-issue";
+  | "id-card-issue"
+  | "nominations"
+  | "nomination-create"
+  | "nomination-detail"
+  | "campaign-finance"
+  | "finance-account-create"
+  | "finance-transactions";
 
 interface DashboardStats {
   totalMembers: number;
@@ -90,6 +96,13 @@ interface AppState {
   dashboardStats: DashboardStats | null;
   memberSearch: string;
   memberStatusFilter: string;
+  nominations: PartyNomination[];
+  nominationsTotal: number;
+  selectedNomination: PartyNomination | null;
+  campaignAccounts: PartyCampaignAccount[];
+  selectedCampaignAccount: PartyCampaignAccount | null;
+  campaignSummary: PartyCampaignSummary | null;
+  nominationStatusFilter: string;
 }
 
 type Action =
@@ -108,7 +121,13 @@ type Action =
   | { type: "SET_ID_CARDS"; idCards: PartyIdCard[] }
   | { type: "SET_DASHBOARD_STATS"; stats: DashboardStats }
   | { type: "SET_MEMBER_SEARCH"; search: string }
-  | { type: "SET_MEMBER_STATUS_FILTER"; status: string };
+  | { type: "SET_MEMBER_STATUS_FILTER"; status: string }
+  | { type: "SET_NOMINATIONS"; nominations: PartyNomination[]; total: number }
+  | { type: "SET_SELECTED_NOMINATION"; nomination: PartyNomination | null }
+  | { type: "SET_CAMPAIGN_ACCOUNTS"; accounts: PartyCampaignAccount[] }
+  | { type: "SET_SELECTED_CAMPAIGN_ACCOUNT"; account: PartyCampaignAccount | null }
+  | { type: "SET_CAMPAIGN_SUMMARY"; summary: PartyCampaignSummary | null }
+  | { type: "SET_NOMINATION_STATUS_FILTER"; status: string };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -144,6 +163,18 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, memberSearch: action.search };
     case "SET_MEMBER_STATUS_FILTER":
       return { ...state, memberStatusFilter: action.status };
+    case "SET_NOMINATIONS":
+      return { ...state, nominations: action.nominations, nominationsTotal: action.total, isLoading: false };
+    case "SET_SELECTED_NOMINATION":
+      return { ...state, selectedNomination: action.nomination };
+    case "SET_CAMPAIGN_ACCOUNTS":
+      return { ...state, campaignAccounts: action.accounts, isLoading: false };
+    case "SET_SELECTED_CAMPAIGN_ACCOUNT":
+      return { ...state, selectedCampaignAccount: action.account };
+    case "SET_CAMPAIGN_SUMMARY":
+      return { ...state, campaignSummary: action.summary, isLoading: false };
+    case "SET_NOMINATION_STATUS_FILTER":
+      return { ...state, nominationStatusFilter: action.status };
     default:
       return state;
   }
@@ -169,6 +200,13 @@ const initialState: AppState = {
   dashboardStats: null,
   memberSearch: "",
   memberStatusFilter: "",
+  nominations: [],
+  nominationsTotal: 0,
+  selectedNomination: null,
+  campaignAccounts: [],
+  selectedCampaignAccount: null,
+  campaignSummary: null,
+  nominationStatusFilter: "",
 };
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
@@ -441,16 +479,69 @@ function LoadingSpinner() {
   );
 }
 
+// ─── Admin Migrate Card ───────────────────────────────────────────────────────
+
+function AdminMigrateCard({ onMigrate }: { onMigrate: () => Promise<unknown> }) {
+  const [result, setResult] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const handle = async () => {
+    setRunning(true);
+    setResult(null);
+    try {
+      const res = await onMigrate() as { success: boolean; data?: { applied?: number }; error?: string };
+      setResult(res.success ? `✓ Migration complete (${res.data?.applied ?? 0} applied)` : `✗ ${res.error ?? "Failed"}`);
+    } catch (e) {
+      setResult(`✗ ${String(e)}`);
+    }
+    setRunning(false);
+  };
+
+  return (
+    <div style={{ marginTop: "24px", backgroundColor: "#F5F7FA", borderRadius: "12px", padding: "16px", border: "1px solid #DDE2EA" }}>
+      <div
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+        onClick={() => setOpen(!open)}
+      >
+        <span style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D" }}>⚙️ Admin Tools</span>
+        <span style={{ fontSize: "12px", color: "#6B7A8D" }}>{open ? "▲" : "▼"}</span>
+      </div>
+      {open && (
+        <div style={{ marginTop: "12px" }}>
+          {result && (
+            <div style={{ padding: "8px 12px", borderRadius: "8px", backgroundColor: result.startsWith("✓") ? "#D1FAE5" : "#FEE2E2", color: result.startsWith("✓") ? "#1E7A4A" : "#C0392B", fontSize: "13px", marginBottom: "10px" }}>
+              {result}
+            </div>
+          )}
+          <button
+            onClick={handle}
+            disabled={running}
+            style={{ padding: "10px 18px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: running ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 600, opacity: running ? 0.7 : 1 }}
+          >
+            {running ? "Running…" : "🗄️ Run DB Migrations"}
+          </button>
+          <p style={{ fontSize: "12px", color: "#6B7A8D", margin: "8px 0 0" }}>
+            Bootstrap or upgrade this tenant's database tables. Safe to run multiple times.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Dashboard Page ───────────────────────────────────────────────────────────
 
 function DashboardPage({
   state,
   dispatch,
   t,
+  onMigrate,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   t: ReturnType<typeof getPartyTranslations>;
+  onMigrate?: () => Promise<unknown>;
 }) {
   const { dashboardStats, organization, announcements, meetings } = state;
   const upcomingMeetings = meetings.filter((m) => m.scheduledAt > Date.now());
@@ -533,6 +624,8 @@ function DashboardPage({
           <div style={{ marginTop: "8px", fontSize: "14px" }}>{t.dashboard.noData}</div>
         </div>
       )}
+
+      {onMigrate && <AdminMigrateCard onMigrate={onMigrate} />}
     </div>
   );
 }
@@ -1221,6 +1314,617 @@ function IdCardsPage({
   );
 }
 
+// ─── Nominations Pages ────────────────────────────────────────────────────────
+
+const NOMINATION_STATUS_COLORS: Record<string, string> = {
+  pending: "#C8A951",
+  approved: "#1E7A4A",
+  rejected: "#C0392B",
+  submitted: "#1A3A5C",
+};
+
+function NominationsPage({
+  state,
+  dispatch,
+  t,
+  onCreateNomination,
+  onViewNomination,
+  onApprove,
+  onReject,
+  onSubmit,
+  onFilterChange,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+  t: ReturnType<typeof getPartyTranslations>;
+  onCreateNomination: () => void;
+  onViewNomination: (nom: PartyNomination) => void;
+  onApprove: (id: string, notes?: string) => Promise<void>;
+  onReject: (id: string, notes: string) => Promise<void>;
+  onSubmit: (id: string) => Promise<void>;
+  onFilterChange: (status: string) => void;
+}) {
+  const [rejectModal, setRejectModal] = useState<{ id: string } | null>(null);
+  const [rejectNotes, setRejectNotes] = useState("");
+
+  const STATUS_OPTIONS = [
+    { value: "", label: "All" },
+    { value: "pending", label: "Pending" },
+    { value: "approved", label: "Approved" },
+    { value: "rejected", label: "Rejected" },
+    { value: "submitted", label: "Submitted" },
+  ];
+
+  return (
+    <div style={{ padding: "16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>📋 {t.nav.nominations}</h2>
+        <button
+          onClick={onCreateNomination}
+          style={{ padding: "8px 16px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: 600 }}
+        >
+          + New
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", overflowX: "auto", paddingBottom: "4px" }}>
+        {STATUS_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => onFilterChange(opt.value)}
+            style={{
+              padding: "6px 12px",
+              borderRadius: "16px",
+              border: "1px solid",
+              borderColor: state.nominationStatusFilter === opt.value ? "#1A3A5C" : "#DDE2EA",
+              backgroundColor: state.nominationStatusFilter === opt.value ? "#1A3A5C" : "#fff",
+              color: state.nominationStatusFilter === opt.value ? "#fff" : "#1A2433",
+              fontSize: "13px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {state.isLoading ? (
+        <LoadingSpinner />
+      ) : state.nominations.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 16px", color: "#6B7A8D" }}>
+          <div style={{ fontSize: "48px", marginBottom: "12px" }}>📋</div>
+          <p>No nominations found</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          {state.nominations.map((nom) => (
+            <div
+              key={nom.id}
+              style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", cursor: "pointer" }}
+              onClick={() => onViewNomination(nom)}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "15px" }}>{nom.position}</div>
+                  {nom.constituency && <div style={{ fontSize: "13px", color: "#6B7A8D" }}>{nom.constituency}</div>}
+                </div>
+                <span style={{
+                  padding: "3px 10px",
+                  borderRadius: "12px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  backgroundColor: NOMINATION_STATUS_COLORS[nom.status] + "20",
+                  color: NOMINATION_STATUS_COLORS[nom.status],
+                  textTransform: "capitalize",
+                }}>
+                  {nom.status}
+                </span>
+              </div>
+              <div style={{ fontSize: "12px", color: "#6B7A8D" }}>
+                Nominated: {new Date(nom.nominatedAt).toLocaleDateString()}
+              </div>
+              {nom.status === "pending" && (
+                <div style={{ display: "flex", gap: "8px", marginTop: "12px" }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => onApprove(nom.id)}
+                    style={{ flex: 1, padding: "8px", backgroundColor: "#1E7A4A", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
+                  >
+                    ✓ Approve
+                  </button>
+                  <button
+                    onClick={() => { setRejectModal({ id: nom.id }); setRejectNotes(""); }}
+                    style={{ flex: 1, padding: "8px", backgroundColor: "#C0392B", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
+                  >
+                    ✗ Reject
+                  </button>
+                </div>
+              )}
+              {nom.status === "approved" && (
+                <div style={{ marginTop: "12px" }} onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => onSubmit(nom.id)}
+                    style={{ width: "100%", padding: "8px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
+                  >
+                    → Submit to INEC
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {rejectModal && (
+        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "16px" }}>
+          <div style={{ backgroundColor: "#fff", borderRadius: "16px", padding: "24px", width: "100%", maxWidth: "400px" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: "17px" }}>Reject Nomination</h3>
+            <textarea
+              value={rejectNotes}
+              onChange={(e) => setRejectNotes(e.target.value)}
+              placeholder="Reason for rejection (required)"
+              rows={4}
+              style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", resize: "none", boxSizing: "border-box" }}
+            />
+            <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+              <button
+                onClick={() => setRejectModal(null)}
+                style={{ flex: 1, padding: "10px", backgroundColor: "#F5F7FA", color: "#1A2433", border: "1px solid #DDE2EA", borderRadius: "8px", cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { onReject(rejectModal.id, rejectNotes); setRejectModal(null); }}
+                disabled={!rejectNotes.trim()}
+                style={{ flex: 1, padding: "10px", backgroundColor: "#C0392B", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", opacity: rejectNotes.trim() ? 1 : 0.5 }}
+              >
+                Confirm Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NominationCreatePage({
+  state,
+  t,
+  onSave,
+  onCancel,
+}: {
+  state: AppState;
+  t: ReturnType<typeof getPartyTranslations>;
+  onSave: (data: Parameters<ReturnType<typeof createPartyApiClient>["createNomination"]>[0]) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState({ memberId: "", position: "", constituency: "", statementOfIntent: "" });
+
+  return (
+    <div style={{ padding: "16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
+        <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "20px" }}>←</button>
+        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>New Nomination</h2>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Member ID *</label>
+          <input
+            value={form.memberId}
+            onChange={(e) => setForm({ ...form, memberId: e.target.value })}
+            placeholder="Member ID"
+            style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", boxSizing: "border-box" }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Position *</label>
+          <input
+            value={form.position}
+            onChange={(e) => setForm({ ...form, position: e.target.value })}
+            placeholder="e.g. House of Representatives"
+            style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", boxSizing: "border-box" }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Constituency</label>
+          <input
+            value={form.constituency}
+            onChange={(e) => setForm({ ...form, constituency: e.target.value })}
+            placeholder="e.g. Lagos East"
+            style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", boxSizing: "border-box" }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Statement of Intent</label>
+          <textarea
+            value={form.statementOfIntent}
+            onChange={(e) => setForm({ ...form, statementOfIntent: e.target.value })}
+            placeholder="Candidate's statement..."
+            rows={4}
+            style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", resize: "none", boxSizing: "border-box" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+          <button
+            onClick={onCancel}
+            style={{ flex: 1, padding: "14px", backgroundColor: "#F5F7FA", color: "#1A2433", border: "1px solid #DDE2EA", borderRadius: "10px", cursor: "pointer", fontWeight: 600 }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => form.memberId && form.position && onSave({ memberId: form.memberId, position: form.position, constituency: form.constituency || undefined, statementOfIntent: form.statementOfIntent || undefined })}
+            disabled={!form.memberId || !form.position || state.isLoading}
+            style={{ flex: 2, padding: "14px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "10px", cursor: "pointer", fontWeight: 700, opacity: !form.memberId || !form.position ? 0.5 : 1 }}
+          >
+            {state.isLoading ? "Saving…" : "Submit Nomination"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NominationDetailPage({
+  state,
+  t,
+  onApprove,
+  onReject,
+  onSubmit,
+  onBack,
+}: {
+  state: AppState;
+  t: ReturnType<typeof getPartyTranslations>;
+  onApprove: (id: string, notes?: string) => Promise<void>;
+  onReject: (id: string, notes: string) => Promise<void>;
+  onSubmit: (id: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const nom = state.selectedNomination;
+  const [rejectNotes, setRejectNotes] = useState("");
+  const [approveNotes, setApproveNotes] = useState("");
+
+  if (!nom) return <div style={{ padding: "24px", textAlign: "center" }}>No nomination selected</div>;
+
+  return (
+    <div style={{ padding: "16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "20px" }}>←</button>
+        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>Nomination Detail</h2>
+      </div>
+
+      <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div style={{ fontSize: "18px", fontWeight: 700 }}>{nom.position}</div>
+          <span style={{ padding: "4px 12px", borderRadius: "12px", fontSize: "12px", fontWeight: 600, backgroundColor: NOMINATION_STATUS_COLORS[nom.status] + "20", color: NOMINATION_STATUS_COLORS[nom.status], textTransform: "capitalize" }}>
+            {nom.status}
+          </span>
+        </div>
+
+        {[
+          { label: "Member ID", value: nom.memberId },
+          { label: "Constituency", value: nom.constituency || "—" },
+          { label: "Nominated", value: new Date(nom.nominatedAt).toLocaleDateString() },
+          { label: "Nominator", value: nom.nominatorId },
+          nom.vettedBy ? { label: "Vetted By", value: nom.vettedBy } : null,
+          nom.vettingNotes ? { label: "Vetting Notes", value: nom.vettingNotes } : null,
+        ].filter(Boolean).map((row) => row && (
+          <div key={row.label} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F5F7FA" }}>
+            <span style={{ fontSize: "13px", color: "#6B7A8D" }}>{row.label}</span>
+            <span style={{ fontSize: "13px", fontWeight: 600, maxWidth: "60%", textAlign: "right" }}>{row.value}</span>
+          </div>
+        ))}
+
+        {nom.status === "pending" && (
+          <div style={{ marginTop: "20px" }}>
+            <div>
+              <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Approval Notes (optional)</label>
+              <input value={approveNotes} onChange={(e) => setApproveNotes(e.target.value)} placeholder="Notes…" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", marginBottom: "12px", boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Rejection Notes (required to reject)</label>
+              <input value={rejectNotes} onChange={(e) => setRejectNotes(e.target.value)} placeholder="Reason for rejection…" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", marginBottom: "12px", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button onClick={() => onApprove(nom.id, approveNotes)} style={{ flex: 1, padding: "12px", backgroundColor: "#1E7A4A", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600 }}>✓ Approve</button>
+              <button onClick={() => rejectNotes.trim() && onReject(nom.id, rejectNotes)} disabled={!rejectNotes.trim()} style={{ flex: 1, padding: "12px", backgroundColor: "#C0392B", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, opacity: rejectNotes.trim() ? 1 : 0.5 }}>✗ Reject</button>
+            </div>
+          </div>
+        )}
+
+        {nom.status === "approved" && (
+          <div style={{ marginTop: "20px" }}>
+            <button onClick={() => onSubmit(nom.id)} style={{ width: "100%", padding: "14px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 700, fontSize: "15px" }}>
+              → Submit to INEC
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Campaign Finance Pages ───────────────────────────────────────────────────
+
+const POSITION_LEVEL_LIMITS: Record<string, number> = {
+  presidential: 5_000_000_000,
+  governorship: 1_000_000_000,
+  senate: 100_000_000,
+  house_of_representatives: 70_000_000,
+  state_assembly: 30_000_000,
+  lga_chairmanship: 30_000_000,
+  councillor: 30_000_000,
+};
+
+function CampaignFinancePage({
+  state,
+  dispatch,
+  t,
+  onCreateAccount,
+  onViewTransactions,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+  t: ReturnType<typeof getPartyTranslations>;
+  onCreateAccount: () => void;
+  onViewTransactions: (account: PartyCampaignAccount) => void;
+}) {
+  return (
+    <div style={{ padding: "16px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>💳 {t.nav.campaignFinance}</h2>
+        <button
+          onClick={onCreateAccount}
+          style={{ padding: "8px 16px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: 600 }}
+        >
+          + Account
+        </button>
+      </div>
+
+      {state.isLoading ? (
+        <LoadingSpinner />
+      ) : state.campaignAccounts.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 16px", color: "#6B7A8D" }}>
+          <div style={{ fontSize: "48px", marginBottom: "12px" }}>💳</div>
+          <p>No campaign finance accounts yet</p>
+          <button onClick={onCreateAccount} style={{ padding: "10px 24px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600 }}>
+            Create First Account
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          {state.campaignAccounts.map((account) => {
+            const limitNaira = account.limitKobo / 100;
+            return (
+              <div
+                key={account.id}
+                style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", cursor: "pointer" }}
+                onClick={() => onViewTransactions(account)}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <div>
+                    <div style={{ fontWeight: 700, textTransform: "capitalize" }}>{account.positionLevel.replace(/_/g, " ")}</div>
+                    {account.candidateId && <div style={{ fontSize: "13px", color: "#6B7A8D" }}>Candidate: {account.candidateId}</div>}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: "13px", color: "#6B7A8D" }}>Limit</div>
+                    <div style={{ fontWeight: 700, color: "#1A3A5C" }}>₦{limitNaira.toLocaleString()}</div>
+                  </div>
+                </div>
+                <div style={{ fontSize: "12px", color: "#6B7A8D", marginTop: "4px" }}>
+                  Tap to view transactions →
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FinanceAccountCreatePage({
+  state,
+  t,
+  onSave,
+  onCancel,
+}: {
+  state: AppState;
+  t: ReturnType<typeof getPartyTranslations>;
+  onSave: (data: Parameters<ReturnType<typeof createPartyApiClient>["createCampaignAccount"]>[0]) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState({ memberId: "", position: "", positionLevel: "house_of_representatives", constituency: "" });
+
+  const POSITION_LEVELS = [
+    { value: "presidential", label: "Presidential" },
+    { value: "governorship", label: "Governorship" },
+    { value: "senate", label: "Senate" },
+    { value: "house_of_representatives", label: "House of Representatives" },
+    { value: "state_assembly", label: "State Assembly" },
+    { value: "lga_chairmanship", label: "LGA Chairmanship" },
+    { value: "councillor", label: "Councillor" },
+  ];
+
+  const limitKobo = POSITION_LEVEL_LIMITS[form.positionLevel] ?? 0;
+
+  return (
+    <div style={{ padding: "16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
+        <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "20px" }}>←</button>
+        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>New Campaign Finance Account</h2>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Candidate Member ID *</label>
+          <input value={form.memberId} onChange={(e) => setForm({ ...form, memberId: e.target.value })} placeholder="Member ID" style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Position Title *</label>
+          <input value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })} placeholder="e.g. Member House of Representatives" style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Position Level *</label>
+          <select value={form.positionLevel} onChange={(e) => setForm({ ...form, positionLevel: e.target.value })} style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", backgroundColor: "#fff", boxSizing: "border-box" }}>
+            {POSITION_LEVELS.map((pl) => <option key={pl.value} value={pl.value}>{pl.label}</option>)}
+          </select>
+        </div>
+        <div style={{ backgroundColor: "#EFF7F2", borderRadius: "8px", padding: "12px", fontSize: "13px" }}>
+          <strong>Electoral Act 2022 Spending Limit:</strong><br />
+          ₦{(limitKobo / 100).toLocaleString()} for {POSITION_LEVELS.find((pl) => pl.value === form.positionLevel)?.label}
+        </div>
+        <div>
+          <label style={{ fontSize: "13px", fontWeight: 600, color: "#6B7A8D", display: "block", marginBottom: "6px" }}>Constituency</label>
+          <input value={form.constituency} onChange={(e) => setForm({ ...form, constituency: e.target.value })} placeholder="e.g. Ikeja Federal Constituency" style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: "14px", backgroundColor: "#F5F7FA", color: "#1A2433", border: "1px solid #DDE2EA", borderRadius: "10px", cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+          <button
+            onClick={() => form.memberId && form.position && onSave({ memberId: form.memberId, position: form.position, positionLevel: form.positionLevel, constituency: form.constituency || undefined })}
+            disabled={!form.memberId || !form.position || state.isLoading}
+            style={{ flex: 2, padding: "14px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "10px", cursor: "pointer", fontWeight: 700, opacity: !form.memberId || !form.position ? 0.5 : 1 }}
+          >
+            {state.isLoading ? "Creating…" : "Create Account"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FinanceTransactionsPage({
+  state,
+  t,
+  onAddTransaction,
+  onBack,
+}: {
+  state: AppState;
+  t: ReturnType<typeof getPartyTranslations>;
+  onAddTransaction: (data: { type: "income" | "expenditure"; category: string; description: string; amountKobo: number; evidenceUrl?: string }) => Promise<void>;
+  onBack: () => void;
+}) {
+  const account = state.selectedCampaignAccount;
+  const summary = state.campaignSummary;
+  const [showForm, setShowForm] = useState(false);
+  const [txForm, setTxForm] = useState({ type: "income" as "income" | "expenditure", category: "", description: "", amountNaira: "" });
+
+  if (!account) return <div style={{ padding: "24px", textAlign: "center" }}>No account selected</div>;
+
+  const limitNaira = account.limitKobo / 100;
+  const spentNaira = summary ? summary.totalExpenditureKobo / 100 : 0;
+  const incomeNaira = summary ? summary.totalIncomeKobo / 100 : 0;
+  const percent = limitNaira > 0 ? Math.min(100, (spentNaira / limitNaira) * 100) : 0;
+  const atWarning = percent >= 80;
+
+  return (
+    <div style={{ padding: "16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "20px" }}>←</button>
+        <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700, textTransform: "capitalize" }}>
+          {account.positionLevel.replace(/_/g, " ")}
+        </h2>
+      </div>
+
+      <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", marginBottom: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "12px", color: "#6B7A8D", marginBottom: "4px" }}>Income</div>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "#1E7A4A" }}>₦{incomeNaira.toLocaleString()}</div>
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "12px", color: "#6B7A8D", marginBottom: "4px" }}>Expenditure</div>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: "#C0392B" }}>₦{spentNaira.toLocaleString()}</div>
+          </div>
+        </div>
+        <div style={{ marginBottom: "8px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "#6B7A8D", marginBottom: "6px" }}>
+            <span>Spending vs Electoral Act Limit</span>
+            <span style={{ color: atWarning ? "#C0392B" : "#1E7A4A", fontWeight: 700 }}>{percent.toFixed(1)}%</span>
+          </div>
+          <div style={{ height: "10px", backgroundColor: "#F5F7FA", borderRadius: "5px", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${percent}%`, backgroundColor: atWarning ? "#C0392B" : "#1E7A4A", borderRadius: "5px", transition: "width 0.3s" }} />
+          </div>
+          <div style={{ fontSize: "11px", color: "#6B7A8D", marginTop: "4px" }}>
+            Limit: ₦{limitNaira.toLocaleString()}
+          </div>
+        </div>
+        {atWarning && (
+          <div style={{ backgroundColor: "#FEF3CD", borderRadius: "8px", padding: "10px 12px", fontSize: "13px", color: "#856404", display: "flex", alignItems: "center", gap: "8px" }}>
+            ⚠️ Approaching Electoral Act spending limit
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+        <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>Transactions</h3>
+        <button
+          onClick={() => setShowForm(!showForm)}
+          style={{ padding: "8px 16px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
+        >
+          {showForm ? "× Cancel" : "+ Add"}
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", marginBottom: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+            {(["income", "expenditure"] as const).map((type) => (
+              <button
+                key={type}
+                onClick={() => setTxForm({ ...txForm, type })}
+                style={{ flex: 1, padding: "8px", borderRadius: "8px", border: "1px solid", borderColor: txForm.type === type ? "#1A3A5C" : "#DDE2EA", backgroundColor: txForm.type === type ? "#1A3A5C" : "#fff", color: txForm.type === type ? "#fff" : "#1A2433", cursor: "pointer", fontWeight: 600, fontSize: "13px", textTransform: "capitalize" }}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+          <input value={txForm.category} onChange={(e) => setTxForm({ ...txForm, category: e.target.value })} placeholder="Category (e.g. Rally)" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", marginBottom: "8px", boxSizing: "border-box" }} />
+          <input value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder="Description" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", marginBottom: "8px", boxSizing: "border-box" }} />
+          <input type="number" value={txForm.amountNaira} onChange={(e) => setTxForm({ ...txForm, amountNaira: e.target.value })} placeholder="Amount (₦)" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #DDE2EA", fontSize: "14px", marginBottom: "12px", boxSizing: "border-box" }} />
+          <button
+            onClick={() => {
+              const amt = parseFloat(txForm.amountNaira);
+              if (!txForm.category || !txForm.description || isNaN(amt) || amt <= 0) return;
+              onAddTransaction({ type: txForm.type, category: txForm.category, description: txForm.description, amountKobo: Math.round(amt * 100) }).then(() => {
+                setTxForm({ type: "income", category: "", description: "", amountNaira: "" });
+                setShowForm(false);
+              });
+            }}
+            disabled={!txForm.category || !txForm.description || !txForm.amountNaira}
+            style={{ width: "100%", padding: "12px", backgroundColor: "#1A3A5C", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 700, opacity: !txForm.category || !txForm.description || !txForm.amountNaira ? 0.5 : 1 }}
+          >
+            Record Transaction
+          </button>
+        </div>
+      )}
+
+      {state.isLoading ? (
+        <LoadingSpinner />
+      ) : !summary || summary.transactions.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "32px 16px", color: "#6B7A8D", fontSize: "14px" }}>No transactions yet</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {summary.transactions.map((tx) => (
+            <div key={tx.id} style={{ backgroundColor: "#fff", borderRadius: "10px", padding: "12px 16px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: "14px" }}>{tx.description}</div>
+                <div style={{ fontSize: "12px", color: "#6B7A8D" }}>{tx.category} · {new Date(tx.transactionDate).toLocaleDateString()}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 700, fontSize: "15px", color: tx.transactionType === "income" ? "#1E7A4A" : "#C0392B" }}>
+                  {tx.transactionType === "income" ? "+" : "-"}₦{(tx.amountKobo / 100).toLocaleString()}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 interface PartyAppProps {
@@ -1315,6 +2019,37 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
     dispatch({ type: "SET_ID_CARDS", idCards: [] });
   }, []);
 
+  const loadNominations = useCallback(async (statusFilter?: string) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.getNominations(statusFilter || state.nominationStatusFilter || undefined);
+      if (res.success) dispatch({ type: "SET_NOMINATIONS", nominations: res.data.nominations, total: res.data.total });
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  }, [state.nominationStatusFilter, t.common.error]);
+
+  const loadCampaignAccounts = useCallback(async () => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.getCampaignAccounts();
+      if (res.success) dispatch({ type: "SET_CAMPAIGN_ACCOUNTS", accounts: res.data.accounts });
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  }, [t.common.error]);
+
+  const loadCampaignSummary = useCallback(async (accountId: string) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.getCampaignSummary(accountId);
+      if (res.success) dispatch({ type: "SET_CAMPAIGN_SUMMARY", summary: res.data });
+      else dispatch({ type: "SET_CAMPAIGN_SUMMARY", summary: null });
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  }, [t.common.error]);
+
   // ─── Page change effects ──────────────────────────────────────────────────
 
   useEffect(() => {
@@ -1323,6 +2058,10 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
     else if (state.page === "dues") loadDues();
     else if (state.page === "structure") loadStructures();
     else if (state.page === "id-cards") loadIdCards();
+    else if (state.page === "nominations") loadNominations();
+    else if (state.page === "campaign-finance") loadCampaignAccounts();
+    else if (state.page === "finance-transactions" && state.selectedCampaignAccount)
+      loadCampaignSummary(state.selectedCampaignAccount.id);
   }, [state.page]);
 
   // ─── Search/filter effects ────────────────────────────────────────────────
@@ -1366,12 +2105,103 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
     }
   };
 
+  const handleApproveNomination = async (id: string, notes?: string) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.approveNomination(id, notes);
+      if (res.success) {
+        await loadNominations();
+        dispatch({ type: "SET_PAGE", page: "nominations" });
+      } else {
+        dispatch({ type: "SET_ERROR", error: (res as { error: string }).error });
+      }
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  };
+
+  const handleRejectNomination = async (id: string, notes: string) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.rejectNomination(id, notes);
+      if (res.success) {
+        await loadNominations();
+        dispatch({ type: "SET_PAGE", page: "nominations" });
+      } else {
+        dispatch({ type: "SET_ERROR", error: (res as { error: string }).error });
+      }
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  };
+
+  const handleSubmitNomination = async (id: string) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.submitNomination(id);
+      if (res.success) {
+        await loadNominations();
+        dispatch({ type: "SET_PAGE", page: "nominations" });
+      } else {
+        dispatch({ type: "SET_ERROR", error: (res as { error: string }).error });
+      }
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  };
+
+  const handleCreateNomination = async (data: Parameters<typeof api.createNomination>[0]) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.createNomination(data);
+      if (res.success) {
+        await loadNominations();
+        dispatch({ type: "SET_PAGE", page: "nominations" });
+      } else {
+        dispatch({ type: "SET_ERROR", error: (res as { error: string }).error });
+      }
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  };
+
+  const handleCreateCampaignAccount = async (data: Parameters<typeof api.createCampaignAccount>[0]) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.createCampaignAccount(data);
+      if (res.success) {
+        await loadCampaignAccounts();
+        dispatch({ type: "SET_PAGE", page: "campaign-finance" });
+      } else {
+        dispatch({ type: "SET_ERROR", error: (res as { error: string }).error });
+      }
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  };
+
+  const handleAddTransaction = async (accountId: string, data: Parameters<typeof api.addCampaignTransaction>[1]) => {
+    dispatch({ type: "SET_LOADING", isLoading: true });
+    try {
+      const res = await api.addCampaignTransaction(accountId, data);
+      if (res.success) {
+        await loadCampaignSummary(accountId);
+      } else {
+        dispatch({ type: "SET_ERROR", error: (res as { error: string }).error });
+      }
+    } catch {
+      dispatch({ type: "SET_ERROR", error: t.common.error });
+    }
+  };
+
   // ─── Bottom Nav ───────────────────────────────────────────────────────────
 
   const navItems = [
     { page: "dashboard" as Page, icon: "🏛️", label: t.nav.dashboard },
     { page: "members" as Page, icon: "👥", label: t.nav.members },
     { page: "dues" as Page, icon: "💰", label: t.nav.dues },
+    { page: "nominations" as Page, icon: "📋", label: t.nav.nominations },
+    { page: "campaign-finance" as Page, icon: "💳", label: t.nav.campaignFinance },
     { page: "structure" as Page, icon: "🗺️", label: t.nav.structure },
     { page: "meetings" as Page, icon: "📅", label: t.nav.meetings },
     { page: "id-cards" as Page, icon: "🪪", label: t.nav.idCards },
@@ -1386,7 +2216,7 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
 
     switch (state.page) {
       case "dashboard":
-        return <DashboardPage state={state} dispatch={dispatch} t={t} />;
+        return <DashboardPage state={state} dispatch={dispatch} t={t} onMigrate={() => api.migrate()} />;
 
       case "members":
         return (
@@ -1452,6 +2282,87 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
           />
         );
 
+      case "nominations":
+        return (
+          <NominationsPage
+            state={state}
+            dispatch={dispatch}
+            t={t}
+            onCreateNomination={() => dispatch({ type: "SET_PAGE", page: "nomination-create" })}
+            onViewNomination={(nom) => {
+              dispatch({ type: "SET_SELECTED_NOMINATION", nomination: nom });
+              dispatch({ type: "SET_PAGE", page: "nomination-detail" });
+            }}
+            onApprove={handleApproveNomination}
+            onReject={handleRejectNomination}
+            onSubmit={handleSubmitNomination}
+            onFilterChange={(s) => {
+              dispatch({ type: "SET_NOMINATION_STATUS_FILTER", status: s });
+              loadNominations(s);
+            }}
+          />
+        );
+
+      case "nomination-create":
+        return (
+          <NominationCreatePage
+            state={state}
+            t={t}
+            onSave={handleCreateNomination}
+            onCancel={() => dispatch({ type: "SET_PAGE", page: "nominations" })}
+          />
+        );
+
+      case "nomination-detail":
+        return (
+          <NominationDetailPage
+            state={state}
+            t={t}
+            onApprove={handleApproveNomination}
+            onReject={handleRejectNomination}
+            onSubmit={handleSubmitNomination}
+            onBack={() => dispatch({ type: "SET_PAGE", page: "nominations" })}
+          />
+        );
+
+      case "campaign-finance":
+        return (
+          <CampaignFinancePage
+            state={state}
+            dispatch={dispatch}
+            t={t}
+            onCreateAccount={() => dispatch({ type: "SET_PAGE", page: "finance-account-create" })}
+            onViewTransactions={(account) => {
+              dispatch({ type: "SET_SELECTED_CAMPAIGN_ACCOUNT", account });
+              dispatch({ type: "SET_PAGE", page: "finance-transactions" });
+            }}
+          />
+        );
+
+      case "finance-account-create":
+        return (
+          <FinanceAccountCreatePage
+            state={state}
+            t={t}
+            onSave={handleCreateCampaignAccount}
+            onCancel={() => dispatch({ type: "SET_PAGE", page: "campaign-finance" })}
+          />
+        );
+
+      case "finance-transactions":
+        return (
+          <FinanceTransactionsPage
+            state={state}
+            t={t}
+            onAddTransaction={(data) =>
+              state.selectedCampaignAccount
+                ? handleAddTransaction(state.selectedCampaignAccount.id, data)
+                : Promise.resolve()
+            }
+            onBack={() => dispatch({ type: "SET_PAGE", page: "campaign-finance" })}
+          />
+        );
+
       default:
         return <DashboardPage state={state} dispatch={dispatch} t={t} />;
     }
@@ -1459,7 +2370,11 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  const showBottomNav = !["member-create", "dues-create", "meeting-create", "id-card-issue"].includes(state.page);
+  const showBottomNav = ![
+    "member-create", "dues-create", "meeting-create", "id-card-issue",
+    "nomination-create", "nomination-detail",
+    "finance-account-create", "finance-transactions",
+  ].includes(state.page);
 
   return (
     <div style={s.app}>
