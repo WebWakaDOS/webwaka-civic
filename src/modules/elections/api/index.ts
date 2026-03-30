@@ -18,13 +18,17 @@ import { Hono } from "hono";
 import { v4 as uuidv4 } from "uuid";
 import { createLogger } from "../../../core/logger";
 const logger = createLogger("elections");
-import { CIVIC_EVENTS } from "../../../core/event-bus/index";
+import { CIVIC_EVENTS, type EventBusEnv } from "../../../core/event-bus/index";
 import {
   electionAuthMiddleware,
   requireAdminOrManager,
   requireAdmin,
   requireElectionRole,
 } from "../../../core/rbac";
+import { createNotificationService } from "../../../core/services/notifications";
+import { createPaymentService } from "../../../core/services/payments";
+import { createDocumentService } from "../../../core/services/documents";
+import { CIVIC_NOTIFICATION_TEMPLATES } from "../../../core/services/notification-templates";
 import type {
   Election,
   Candidate,
@@ -59,11 +63,10 @@ import {
 } from "../../../core/db/queries";
 import type { D1Database } from "../../../core/db/queries";
 
-export interface ElectionsEnv {
+export interface ElectionsEnv extends EventBusEnv {
   DB: D1Database;
   JWT_SECRET: string;
-  EVENT_BUS_URL?: string;
-  EVENT_BUS_TOKEN?: string;
+  PAYSTACK_SECRET?: string;
 }
 
 const app = new Hono<{ Bindings: ElectionsEnv }>();
@@ -772,6 +775,37 @@ app.post("/:electionId/cast-vote", requireElectionRole(["admin", "campaign_manag
     await publishEvent(c.env, CIVIC_EVENTS.VOTE_CAST, tenantId, electionId, { voteId: vote.id, voterId });
     await logAuditEvent(c.env.DB, tenantId, electionId, "vote_cast", voterId, { voteId: vote.id });
 
+    // Phase 6: vote cast notification + voter certificate via CORE-COMMS / CORE-DOCS
+    const voterRow = await c.env.DB.prepare(
+      `SELECT name, phone, email FROM civic_voters WHERE id = ? AND tenantId = ? LIMIT 1`
+    ).bind(voterId, tenantId).first<{ name?: string; phone?: string; email?: string }>().catch(() => null);
+    const electionRow = await c.env.DB.prepare(
+      `SELECT title FROM civic_elections WHERE id = ? AND tenantId = ? LIMIT 1`
+    ).bind(electionId, tenantId).first<{ title?: string }>().catch(() => null);
+    if (voterRow?.phone) {
+      const notifSvc = createNotificationService(c.env);
+      notifSvc.requestNotification({
+        tenantId,
+        organizationId: tenantId,
+        recipientPhone: voterRow.phone,
+        channel: "sms",
+        templateId: CIVIC_NOTIFICATION_TEMPLATES.VOTE_CAST,
+        data: { electionId, voteId: vote.id, candidateId: vote.candidateId },
+        priority: "high",
+        idempotencyKey: `vote-cast:${vote.id}`,
+      }).catch((e) => logger.error("Vote cast notification failed", { error: String(e) }));
+      const docSvc = createDocumentService(c.env);
+      docSvc.requestVoterCertificate({
+        tenantId,
+        organizationId: tenantId,
+        voterName: voterRow.name ?? voterId,
+        voterPhone: voterRow.phone,
+        electionName: electionRow?.title ?? electionId,
+        votedAt: vote.castAt,
+        verificationCode: vote.id.slice(-8).toUpperCase(),
+      }).catch((e) => logger.error("Voter certificate generation failed", { error: String(e) }));
+    }
+
     logger.info("Vote cast", { tenantId, electionId, voteId: vote.id, voterId });
     return c.json({ success: true, data: vote }, 201);
   } catch (error) {
@@ -1188,6 +1222,24 @@ app.post("/:electionId/volunteers/:id/tasks", requireAdminOrManager, async (c) =
     await publishEvent(c.env, CIVIC_EVENTS.VOLUNTEER_TASK_ASSIGNED, tenantId, electionId, { taskId: task.id, volunteerId, title });
     await logAuditEvent(c.env.DB, tenantId, electionId, "task_assigned", undefined, { taskId: task.id, volunteerId, title });
 
+    // Phase 6: notify volunteer of task assignment via CORE-COMMS
+    const volunteerRow = await c.env.DB.prepare(
+      `SELECT phone FROM civic_volunteers WHERE id = ? AND tenantId = ? LIMIT 1`
+    ).bind(volunteerId, tenantId).first<{ phone?: string }>().catch(() => null);
+    if (volunteerRow?.phone) {
+      const notifSvc = createNotificationService(c.env);
+      notifSvc.requestNotification({
+        tenantId,
+        organizationId: tenantId,
+        recipientPhone: volunteerRow.phone,
+        channel: "sms",
+        templateId: CIVIC_NOTIFICATION_TEMPLATES.VOLUNTEER_TASK_ASSIGNED,
+        data: { taskId: task.id, taskTitle: title, dueAt: task.dueDate ?? 0 },
+        priority: "normal",
+        idempotencyKey: `task-assigned:${task.id}`,
+      }).catch((e) => logger.error("Task assignment notification failed", { error: String(e) }));
+    }
+
     logger.info("Task assigned", { tenantId, electionId, taskId: task.id, volunteerId, title });
     return c.json({ success: true, data: task }, 201);
   } catch (error) {
@@ -1328,6 +1380,49 @@ app.post("/:electionId/donations", requireAdminOrManager, async (c) => {
 
     await publishEvent(c.env, CIVIC_EVENTS.DONATION_RECEIVED_CAMPAIGN, tenantId, electionId, { donationId: donation.id, amountKobo });
     await logAuditEvent(c.env.DB, tenantId, electionId, "donation_received", undefined, { donationId: donation.id, amountKobo });
+
+    // Phase 6: donor notification + donation receipt + Paystack payment init
+    if (donation.donorPhone || donation.donorEmail) {
+      const notifSvc = createNotificationService(c.env);
+      notifSvc.requestNotification({
+        tenantId,
+        organizationId: tenantId,
+        recipientPhone: donation.donorPhone ?? undefined,
+        recipientEmail: donation.donorEmail ?? undefined,
+        channel: donation.donorPhone ? "whatsapp" : "email",
+        templateId: CIVIC_NOTIFICATION_TEMPLATES.CAMPAIGN_DONATION_RECEIVED,
+        data: { donationId: donation.id, amountKobo: donation.amountKobo, donorName: donation.donorName },
+        priority: "high",
+        idempotencyKey: `campaign-donation-notif:${donation.id}`,
+      }).catch((e) => logger.error("Campaign donation notification failed", { error: String(e) }));
+
+      const docSvc = createDocumentService(c.env);
+      docSvc.requestDonationReceipt({
+        tenantId,
+        organizationId: tenantId,
+        donorName: donation.donorName,
+        donorPhone: donation.donorPhone ?? undefined,
+        donorEmail: donation.donorEmail ?? undefined,
+        amountKobo: donation.amountKobo,
+        receiptNumber: donation.id.slice(-10).toUpperCase(),
+        donationDate: donation.createdAt,
+        organizationName: tenantId,
+      }).catch((e) => logger.error("Campaign donation receipt PDF failed", { error: String(e) }));
+    }
+    if (paymentMethod === "paystack" && donation.donorEmail) {
+      const paySvc = createPaymentService(c.env);
+      paySvc.initializePayment({
+        tenantId,
+        organizationId: tenantId,
+        amountKobo: donation.amountKobo,
+        customerEmail: donation.donorEmail,
+        customerPhone: donation.donorPhone ?? undefined,
+        customerName: donation.donorName,
+        category: "campaign_contribution",
+        referenceId: donation.id,
+        metadata: { electionId, donorId: donation.donorId },
+      }).catch((e) => logger.error("Campaign donation Paystack init failed", { error: String(e) }));
+    }
 
     logger.info("Donation recorded", { tenantId, electionId, donationId: donation.id, amountKobo });
     return c.json({ success: true, data: donation }, 201);

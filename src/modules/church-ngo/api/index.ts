@@ -426,6 +426,19 @@ app.post("/api/civic/members", async (c) => {
       }).catch((e) => logger.error("Welcome notification failed", { error: String(e) }));
     }
 
+    // Phase 6: generate member ID card document via CORE-DOCS
+    const docSvc = createDocumentService(c.env);
+    docSvc.requestMemberIdCard({
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      memberName: `${member.firstName} ${member.lastName}`,
+      memberPhone: member.phone,
+      membershipNumber: member.id,
+      photoUrl: member.photoUrl,
+      organizationName: payload.organizationId,
+      cardType: "member_id_card",
+    }).catch((e) => logger.error("Member ID card generation failed", { error: String(e) }));
+
     logger.info("Member registered", { memberId: member.id });
     return apiSuccess(member);
   } catch (err) {
@@ -616,6 +629,20 @@ app.post("/api/civic/donations", async (c) => {
         priority: "high",
         idempotencyKey: `donation-receipt:${donation.id}`,
       }).catch((e) => logger.error("Donation receipt notification failed", { error: String(e) }));
+
+      // Phase 6: generate donation receipt PDF via CORE-DOCS
+      const docSvc = createDocumentService(c.env);
+      docSvc.requestDonationReceipt({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        donorName: (body.customerName as string | undefined) ?? "Donor",
+        donorPhone: body.customerPhone as string | undefined,
+        donorEmail: body.customerEmail as string | undefined,
+        amountKobo: donation.amountKobo,
+        receiptNumber: donation.receiptNumber ?? donation.id,
+        donationDate: donation.donationDate,
+        organizationName: payload.organizationId,
+      }).catch((e) => logger.error("Donation receipt PDF generation failed", { error: String(e) }));
     }
 
     if (donation.paymentMethod === "paystack" && body.customerEmail) {

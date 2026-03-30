@@ -27,6 +27,9 @@ import {
   nowMs,
 } from "../../../core/response";
 import { createDocumentService } from "../../../core/services/documents";
+import { createNotificationService } from "../../../core/services/notifications";
+import { createPaymentService } from "../../../core/services/payments";
+import { CIVIC_NOTIFICATION_TEMPLATES } from "../../../core/services/notification-templates";
 import {
   getPartyOrganizationByTenant,
   createPartyOrganization,
@@ -414,6 +417,30 @@ app.post("/api/party/members", async (c) => {
     structureId: member.structureId,
     membershipNumber: member.membershipNumber,
   } });
+
+  // Phase 6: welcome notification + party ID card via CORE-COMMS / CORE-DOCS
+  if (member.phone || member.email) {
+    const notifSvc = createNotificationService(c.env);
+    notifSvc.sendWelcome(c.env, {
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      recipientPhone: member.phone,
+      name: member.firstName,
+      membershipNumber: member.membershipNumber ?? member.id,
+    }).catch((e) => logger.error("Party member welcome notification failed", { error: String(e) }));
+  }
+  const docSvc = createDocumentService(c.env);
+  docSvc.requestMemberIdCard({
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    memberName: `${member.firstName} ${member.lastName}`,
+    memberPhone: member.phone,
+    membershipNumber: member.membershipNumber ?? member.id,
+    photoUrl: member.photoUrl,
+    organizationName: payload.organizationId,
+    cardType: "party_id_card",
+  }).catch((e) => logger.error("Party member ID card generation failed", { error: String(e) }));
+
   logger.info("Party member registered", { id: member.id, membershipNumber, tenantId: payload.tenantId });
   return apiSuccess(member);
 });
@@ -520,6 +547,7 @@ app.post("/api/party/dues", async (c) => {
     year: body.year,
     amountKobo: body.amountKobo,
     paymentMethod: body.paymentMethod,
+    paymentStatus: body.paymentMethod === "paystack" ? "pending" : "cash",
     receiptNumber: body.receiptNumber ?? `RCP-${generateId().slice(0, 8).toUpperCase()}`,
     paidAt: body.paidAt ?? nowMs(),
     collectedBy: body.collectedBy ?? payload.sub,
@@ -534,6 +562,49 @@ app.post("/api/party/dues", async (c) => {
     year: dues.year,
     amountKobo: dues.amountKobo,
   } });
+
+  // Phase 6: dues notification + receipt document
+  const member = await getPartyMemberById(c.env.DB, dues.memberId, payload.tenantId).catch(() => null);
+  if (member?.phone) {
+    const notifSvc = createNotificationService(c.env);
+    notifSvc.sendDuesReminder({
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      recipientPhone: member.phone,
+      name: member.firstName,
+      year: dues.year,
+      amountKobo: dues.amountKobo,
+    }).catch((e) => logger.error("Dues confirmation notification failed", { error: String(e) }));
+
+    const docSvc = createDocumentService(c.env);
+    docSvc.requestDuesReceipt({
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      memberName: `${member.firstName} ${member.lastName}`,
+      memberPhone: member.phone,
+      year: dues.year,
+      amountKobo: dues.amountKobo,
+      receiptNumber: dues.receiptNumber ?? dues.id,
+      organizationName: payload.organizationId,
+    }).catch((e) => logger.error("Dues receipt PDF generation failed", { error: String(e) }));
+  }
+
+  // Phase 6: initiate Paystack payment if paymentMethod is paystack
+  if (dues.paymentMethod === "paystack" && member?.email) {
+    const paySvc = createPaymentService(c.env);
+    paySvc.initializePayment({
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      amountKobo: dues.amountKobo,
+      customerEmail: member.email,
+      customerPhone: member.phone,
+      customerName: `${member.firstName} ${member.lastName}`,
+      category: "membership_dues",
+      referenceId: dues.id,
+      metadata: { memberId: dues.memberId, year: dues.year },
+    }).catch((e) => logger.error("Dues Paystack init failed", { error: String(e) }));
+  }
+
   logger.info("Party dues recorded", { id: dues.id, memberId: dues.memberId, year: dues.year, tenantId: payload.tenantId });
   return apiSuccess(dues);
 });
@@ -946,6 +1017,7 @@ app.post("/api/party/sync/push", async (c) => {
           year: d.year ?? new Date().getFullYear(),
           amountKobo: d.amountKobo ?? 0,
           paymentMethod: d.paymentMethod ?? "cash",
+          paymentStatus: d.paymentStatus ?? "cash",
           receiptNumber: d.receiptNumber ?? `RCP-${mutation.id.slice(0, 8).toUpperCase()}`,
           paidAt: d.paidAt ?? nowMs(),
           createdAt: nowMs(),
@@ -1076,6 +1148,21 @@ app.patch("/api/party/nominations/:id/approve", async (c) => {
       electionRef: nom.electionRef,
       organizationId: payload.organizationId,
     });
+    // Phase 6: notify nominee of approval
+    const nomMember = await getPartyMemberById(c.env.DB, nom.memberId, payload.tenantId).catch(() => null);
+    if (nomMember?.phone) {
+      const notifSvc = createNotificationService(c.env);
+      notifSvc.requestNotification({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        recipientPhone: nomMember.phone,
+        channel: "whatsapp",
+        templateId: CIVIC_NOTIFICATION_TEMPLATES.NOMINATION_APPROVED,
+        data: { position: nom.position, nomineeId: nom.id, nominationId: nom.id },
+        priority: "high",
+        idempotencyKey: `nomination-approved:${nom.id}`,
+      }).catch((e) => logger.error("Nomination approval notification failed", { error: String(e) }));
+    }
     return apiSuccess(nom);
   } catch (err) {
     logger.error("Failed to approve nomination", { error: String(err) });
@@ -1091,6 +1178,21 @@ app.patch("/api/party/nominations/:id/reject", async (c) => {
     const nom = await updatePartyNominationStatus(c.env.DB, c.req.param("id"), payload.tenantId, "rejected", payload.sub, body.notes);
     if (!nom) return apiError("Nomination not found", 404);
     await emitEvent(c.env, "party.nomination.rejected", payload.tenantId, { nominationId: nom.id, organizationId: payload.organizationId });
+    // Phase 6: notify nominee of rejection
+    const rejMember = await getPartyMemberById(c.env.DB, nom.memberId, payload.tenantId).catch(() => null);
+    if (rejMember?.phone) {
+      const notifSvc = createNotificationService(c.env);
+      notifSvc.requestNotification({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        recipientPhone: rejMember.phone,
+        channel: "whatsapp",
+        templateId: CIVIC_NOTIFICATION_TEMPLATES.NOMINATION_REJECTED,
+        data: { position: nom.position, notes: body.notes ?? "" },
+        priority: "normal",
+        idempotencyKey: `nomination-rejected:${nom.id}`,
+      }).catch((e) => logger.error("Nomination rejection notification failed", { error: String(e) }));
+    }
     return apiSuccess(nom);
   } catch (err) {
     logger.error("Failed to reject nomination", { error: String(err) });

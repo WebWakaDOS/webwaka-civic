@@ -917,6 +917,34 @@ function MemberCreatePage({
   );
 }
 
+// ─── Payment Status Badge ─────────────────────────────────────────────────────
+const PAYMENT_STATUS_COLORS: Record<string, string> = {
+  cash: "#6b7280",
+  pending: "#d97706",
+  processing: "#2563eb",
+  success: "#16a34a",
+  failed: "#dc2626",
+};
+function PaymentStatusBadge({ status }: { status?: string }) {
+  if (!status || status === "cash") return null;
+  return (
+    <span style={{
+      display: "inline-block",
+      fontSize: "10px",
+      fontWeight: 600,
+      padding: "2px 6px",
+      borderRadius: "10px",
+      color: "#fff",
+      backgroundColor: PAYMENT_STATUS_COLORS[status] ?? "#6b7280",
+      marginLeft: "6px",
+      textTransform: "uppercase",
+      letterSpacing: "0.03em",
+    }}>
+      {status}
+    </span>
+  );
+}
+
 // ─── Dues Page ────────────────────────────────────────────────────────────────
 
 function DuesPage({
@@ -960,8 +988,11 @@ function DuesPage({
         dues.map((due) => (
           <div key={due.id} style={s.card}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: "15px" }}>{koboToNaira(due.amountKobo)}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: "15px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                  {koboToNaira(due.amountKobo)}
+                  <PaymentStatusBadge status={due.paymentStatus} />
+                </div>
                 <div style={{ fontSize: "12px", color: colors.textMuted, marginTop: "2px" }}>
                   {due.year} · {due.paymentMethod}
                 </div>
@@ -971,8 +1002,21 @@ function DuesPage({
                   </div>
                 )}
               </div>
-              <div style={{ fontSize: "12px", color: colors.textMuted, textAlign: "right" }}>
-                {formatWATDate(due.paidAt)}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                <div style={{ fontSize: "12px", color: colors.textMuted, textAlign: "right" }}>
+                  {formatWATDate(due.paidAt)}
+                </div>
+                {due.receiptNumber && (
+                  <a
+                    href={`/api/party/documents/dues-receipt?ref=${encodeURIComponent(due.receiptNumber)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "11px", color: colors.primary, textDecoration: "none", whiteSpace: "nowrap" }}
+                    aria-label="Get Receipt"
+                  >
+                    📄 Receipt
+                  </a>
+                )}
               </div>
             </div>
           </div>

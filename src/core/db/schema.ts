@@ -402,6 +402,25 @@ CREATE TABLE IF NOT EXISTS civic_ndpr_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_civic_ndpr_audit_tenant ON civic_ndpr_audit_log(tenantId);
 CREATE INDEX IF NOT EXISTS idx_civic_ndpr_audit_member ON civic_ndpr_audit_log(memberId);
+
+-- Phase 6: Payment status tracking on donations
+-- paymentStatus: cash | pending | processing | success | failed
+ALTER TABLE civic_donations ADD COLUMN paymentStatus TEXT NOT NULL DEFAULT 'cash';
+ALTER TABLE party_dues ADD COLUMN paymentStatus TEXT NOT NULL DEFAULT 'cash';
+
+-- Phase 6: Paystack Webhook Idempotency Log (shared across all modules)
+CREATE TABLE IF NOT EXISTS civic_webhook_log (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'paystack',
+  event TEXT NOT NULL,
+  reference TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'received',
+  processedAt INTEGER NOT NULL,
+  createdAt INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_civic_webhook_reference ON civic_webhook_log(provider, reference);
+CREATE INDEX IF NOT EXISTS idx_civic_webhook_tenant ON civic_webhook_log(tenantId);
 `;
 
 // ─── TypeScript Interfaces ────────────────────────────────────────────────────
@@ -479,6 +498,8 @@ export interface CivicMember {
   deletedAt?: number;
 }
 
+export type PaymentStatus = "cash" | "pending" | "processing" | "success" | "failed";
+
 export interface CivicDonation {
   id: string;
   tenantId: string;
@@ -491,6 +512,7 @@ export interface CivicDonation {
   receiptNumber?: string;
   paymentMethod: string;
   paymentReference?: string;
+  paymentStatus: PaymentStatus;
   eventId?: string;
   projectId?: string;
   recordedBy: string;
@@ -498,6 +520,17 @@ export interface CivicDonation {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+}
+
+export interface CivicWebhookLog {
+  id: string;
+  tenantId: string;
+  provider: string;
+  event: string;
+  reference: string;
+  status: string;
+  processedAt: number;
+  createdAt: number;
 }
 
 export interface CivicPledge {
@@ -832,6 +865,7 @@ export interface PartyDues {
   year: number;
   amountKobo: number;
   paymentMethod: PartyPaymentMethod;
+  paymentStatus: PaymentStatus;
   receiptNumber: string;
   paidAt: number;
   collectedBy?: string;
@@ -1074,6 +1108,7 @@ CREATE TABLE IF NOT EXISTS party_dues (
   year INTEGER NOT NULL,
   amountKobo INTEGER NOT NULL,
   paymentMethod TEXT NOT NULL CHECK(paymentMethod IN ('cash','bank_transfer','pos','mobile_money','online')),
+  paymentStatus TEXT NOT NULL DEFAULT 'cash',
   receiptNumber TEXT NOT NULL,
   paidAt INTEGER NOT NULL,
   collectedBy TEXT,

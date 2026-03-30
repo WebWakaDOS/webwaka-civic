@@ -1244,14 +1244,14 @@ export async function createPartyDues(
   await db
     .prepare(
       `INSERT INTO party_dues
-        (id, tenantId, organizationId, memberId, year, amountKobo, paymentMethod,
+        (id, tenantId, organizationId, memberId, year, amountKobo, paymentMethod, paymentStatus,
          receiptNumber, paidAt, collectedBy, notes, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       dues.id, dues.tenantId, dues.organizationId, dues.memberId,
-      dues.year, dues.amountKobo, dues.paymentMethod, dues.receiptNumber,
-      dues.paidAt, dues.collectedBy ?? null, dues.notes ?? null,
+      dues.year, dues.amountKobo, dues.paymentMethod, dues.paymentStatus ?? "cash",
+      dues.receiptNumber, dues.paidAt, dues.collectedBy ?? null, dues.notes ?? null,
       dues.createdAt, dues.updatedAt
     )
     .run();

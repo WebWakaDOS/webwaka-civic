@@ -166,6 +166,63 @@ export class DocumentService {
     });
   }
 
+  async requestDuesReceipt(opts: {
+    tenantId: string;
+    organizationId: string;
+    memberName: string;
+    memberPhone?: string;
+    year: number;
+    amountKobo: number;
+    receiptNumber: string;
+    organizationName: string;
+    locale?: "en" | "yo" | "ig" | "ha";
+  }): Promise<DocumentResult> {
+    return this.requestDocument({
+      tenantId: opts.tenantId,
+      organizationId: opts.organizationId,
+      template: "dues_receipt",
+      data: {
+        memberName: opts.memberName,
+        year: opts.year,
+        amountKobo: opts.amountKobo,
+        receiptNumber: opts.receiptNumber,
+        organizationName: opts.organizationName,
+      },
+      deliveryChannel: opts.memberPhone ? "whatsapp" : "none",
+      recipientPhone: opts.memberPhone,
+      recipientName: opts.memberName,
+      locale: opts.locale,
+    });
+  }
+
+  async requestVoterCertificate(opts: {
+    tenantId: string;
+    organizationId: string;
+    voterName: string;
+    voterPhone?: string;
+    electionName: string;
+    votedAt: number;
+    verificationCode: string;
+    locale?: "en" | "yo" | "ig" | "ha";
+  }): Promise<DocumentResult> {
+    return this.requestDocument({
+      tenantId: opts.tenantId,
+      organizationId: opts.organizationId,
+      template: "voter_certificate",
+      data: {
+        voterName: opts.voterName,
+        electionName: opts.electionName,
+        votedAt: opts.votedAt,
+        verificationCode: opts.verificationCode,
+      },
+      format: "pdf",
+      deliveryChannel: opts.voterPhone ? "whatsapp" : "none",
+      recipientPhone: opts.voterPhone,
+      recipientName: opts.voterName,
+      locale: opts.locale,
+    });
+  }
+
   async requestGrantLetter(opts: {
     tenantId: string;
     organizationId: string;

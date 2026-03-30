@@ -871,6 +871,34 @@ function CreateMemberPage({
   );
 }
 
+// ─── Payment Status Badge ─────────────────────────────────────────────────────
+const PAYMENT_STATUS_COLORS: Record<string, string> = {
+  cash: "#6b7280",
+  pending: "#d97706",
+  processing: "#2563eb",
+  success: "#16a34a",
+  failed: "#dc2626",
+};
+function PaymentStatusBadge({ status }: { status?: string }) {
+  if (!status || status === "cash") return null;
+  return (
+    <span style={{
+      display: "inline-block",
+      fontSize: "10px",
+      fontWeight: 600,
+      padding: "2px 6px",
+      borderRadius: "10px",
+      color: "#fff",
+      backgroundColor: PAYMENT_STATUS_COLORS[status] ?? "#6b7280",
+      marginLeft: "6px",
+      textTransform: "uppercase",
+      letterSpacing: "0.03em",
+    }}>
+      {status}
+    </span>
+  );
+}
+
 // ─── Donations Page ───────────────────────────────────────────────────────────
 
 function DonationsPage({
@@ -906,9 +934,10 @@ function DonationsPage({
         state.donations.map((d) => (
           <div key={d.id} style={s.card}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: "15px" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: "15px", display: "flex", alignItems: "center", flexWrap: "wrap" }}>
                   {DONATION_TYPES.find((dt) => dt.value === d.donationType)?.label ?? d.donationType}
+                  <PaymentStatusBadge status={d.paymentStatus} />
                 </div>
                 <div style={{ fontSize: "12px", color: colors.textMuted, marginTop: "2px" }}>
                   {toWATDisplay(d.donationDate, "date")} •{" "}
@@ -920,8 +949,21 @@ function DonationsPage({
                   </div>
                 )}
               </div>
-              <div style={{ fontSize: "16px", fontWeight: 700, color: colors.primary }}>
-                {koboToNaira(d.amountKobo)}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: colors.primary }}>
+                  {koboToNaira(d.amountKobo)}
+                </div>
+                {d.receiptNumber && (
+                  <a
+                    href={`/api/documents/receipt?ref=${encodeURIComponent(d.receiptNumber)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "11px", color: colors.primary, textDecoration: "none", whiteSpace: "nowrap" }}
+                    aria-label="Get Receipt"
+                  >
+                    📄 {t.donations.receiptNumber}
+                  </a>
+                )}
               </div>
             </div>
           </div>

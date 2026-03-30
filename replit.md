@@ -269,6 +269,42 @@ Provides reusable JWT verification and role-guard middleware for CIV-3 (Election
 ### Build Status
 - **0 TypeScript errors**, **0 Vite errors**, **447 KB bundle**
 
+## Phase 6 — Platform Integrations: Notifications, Payments & Documents — COMPLETED (Weeks 33–38)
+
+### T001: Schema — paymentStatus + CivicWebhookLog
+- `paymentStatus TEXT DEFAULT 'cash'` column added to `civic_donations` and `party_dues` (ALTER TABLE migrations + CREATE TABLE DDL)
+- `PaymentStatus` type (`cash | pending | processing | success | failed`) added to `src/core/db/schema.ts`
+- `CivicWebhookLog` table + unique index on (provider, reference) for Paystack webhook idempotency
+
+### T002: DocumentService — convenience methods
+- `requestDuesReceipt()` added to `src/core/services/documents.ts` (party dues PDF receipt)
+- `requestVoterCertificate()` added (election voter certificate PDF)
+
+### T003: Church-NGO — DocumentService wired
+- `donation.create` → `docSvc.requestDonationReceipt()` (fire-and-forget)
+- `member.create` → `docSvc.requestMemberIdCard()` (fire-and-forget)
+
+### T004: Political Party — full service wiring
+- `member.register` → `notifSvc` welcome SMS + `docSvc.requestMemberIdCard()`
+- `dues.record` → dues confirmation SMS + `docSvc.requestDuesReceipt()` + `paySvc.initializePayment()` (if paystack)
+- `nomination.approve / reject` → `notifSvc` outcome SMS
+- `paymentStatus` defaults: `"paystack"` method → `"pending"`, all others → `"cash"`
+
+### T005: Elections — all 3 services wired
+- `vote.cast` → `notifSvc(VOTE_CAST)` + `docSvc.requestVoterCertificate()` (if voter has phone)
+- `volunteer.task.assign` → `notifSvc(VOLUNTEER_TASK_ASSIGNED)` (if volunteer has phone)
+- `campaign.donation` → `notifSvc(CAMPAIGN_DONATION_RECEIVED)` + `docSvc.requestDonationReceipt()` + `paySvc.initializePayment()` (if paystack + email)
+- `ElectionsEnv` extended from `EventBusEnv`; `PAYSTACK_SECRET` optional field added
+
+### T006: Frontend — paymentStatus badges + receipt links
+- `PaymentStatusBadge` component added to `church-ngo/ui.tsx` and `political-party/ui.tsx`
+- Badge colours: pending=amber, processing=blue, success=green, failed=red; `cash` hidden
+- `📄 Receipt` link shown on donation/dues cards when `receiptNumber` is present
+- `party_dues` table DDL + `createPartyDues` query updated with `paymentStatus` column
+
+### Build Status
+- **0 TypeScript errors**, **0 Vite errors**, **448 KB bundle**
+
 ## Key Features
 - Mobile-first, offline-first PWA
 - Multi-tenancy (every record includes `tenantId`)
