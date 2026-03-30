@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "SiZSFPoUNQlPpAcLNgzru"
+uri = "file://reports/webwaka-civic-research-report.md"
+type = "text"
+title = "WebWaka Civic — Comprehensive Research & Enhancement Report"
