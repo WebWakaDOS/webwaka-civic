@@ -20,6 +20,7 @@ import type {
   CivicMember,
   CivicOrganization,
   CivicPledge,
+  CivicWebhookLog,
 } from "./schema.ts";
 
 // ─── D1 Database Interface ────────────────────────────────────────────────────
@@ -1801,5 +1802,91 @@ export async function getPublicCollationBreakdown(
     ? db.prepare(sql).bind(electionId, level)
     : db.prepare(sql).bind(electionId);
   const res = await stmt.all<ElectionResultCollation>();
+  return res.results ?? [];
+}
+
+// ─── CivicWebhookLog Queries ──────────────────────────────────────────────────
+
+/**
+ * Insert a webhook event into the idempotency log.
+ * Returns false if a duplicate (provider + reference) already exists.
+ */
+export async function insertWebhookLog(
+  db: D1Database,
+  log: CivicWebhookLog
+): Promise<boolean> {
+  try {
+    await db
+      .prepare(
+        `INSERT INTO civic_webhook_log (id, tenantId, provider, event, reference, status, processedAt, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        log.id,
+        log.tenantId,
+        log.provider,
+        log.event,
+        log.reference,
+        log.status,
+        log.processedAt,
+        log.createdAt
+      )
+      .run();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check whether a webhook event has already been processed (idempotency).
+ */
+export async function webhookLogExists(
+  db: D1Database,
+  provider: string,
+  reference: string
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT id FROM civic_webhook_log WHERE provider = ? AND reference = ? LIMIT 1`
+    )
+    .bind(provider, reference)
+    .first<{ id: string }>();
+  return row != null;
+}
+
+/**
+ * Update the status of a webhook log entry (e.g. 'received' → 'processed' | 'error').
+ */
+export async function updateWebhookLogStatus(
+  db: D1Database,
+  provider: string,
+  reference: string,
+  status: string
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE civic_webhook_log SET status = ? WHERE provider = ? AND reference = ?`
+    )
+    .bind(status, provider, reference)
+    .run();
+}
+
+/**
+ * Fetch recent webhook log entries for the admin log page.
+ */
+export async function getWebhookLogs(
+  db: D1Database,
+  tenantId: string,
+  limit = 50,
+  offset = 0
+): Promise<CivicWebhookLog[]> {
+  const res = await db
+    .prepare(
+      `SELECT * FROM civic_webhook_log WHERE tenantId = ?
+       ORDER BY processedAt DESC LIMIT ? OFFSET ?`
+    )
+    .bind(tenantId, limit, offset)
+    .all<CivicWebhookLog>();
   return res.results ?? [];
 }

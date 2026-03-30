@@ -905,12 +905,24 @@ function DonationsPage({
   state,
   dispatch,
   t,
+  onRefresh,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   t: ReturnType<typeof getTranslations>;
+  onRefresh?: () => Promise<void>;
 }) {
   const totalKobo = state.donations.reduce((sum, d) => sum + d.amountKobo, 0);
+
+  const hasPending = state.donations.some(
+    (d) => d.paymentStatus === "pending" || d.paymentStatus === "processing"
+  );
+
+  useEffect(() => {
+    if (!hasPending || !onRefresh) return;
+    const timer = setInterval(() => { void onRefresh(); }, 10_000);
+    return () => clearInterval(timer);
+  }, [hasPending, onRefresh]);
 
   return (
     <div>
@@ -2034,6 +2046,13 @@ export function ChurchNGOApp() {
     void loadDashboard();
   }, [loadDashboard]);
 
+  const refreshDonations = useCallback(async () => {
+    const res = await apiGet<{ donations: CivicDonation[]; totalKobo: number }>("/donations");
+    if (res.success && res.data) {
+      dispatch({ type: "SET_DONATIONS", donations: res.data.donations });
+    }
+  }, [dispatch]);
+
   // Render current page
   const renderPage = () => {
     if (state.isLoading && state.page === "dashboard") return <LoadingSpinner />;
@@ -2048,7 +2067,7 @@ export function ChurchNGOApp() {
           <CreateMemberPage state={state} dispatch={dispatch} t={t} offlineDb={offlineDb} />
         );
       case "donations":
-        return <DonationsPage state={state} dispatch={dispatch} t={t} />;
+        return <DonationsPage state={state} dispatch={dispatch} t={t} onRefresh={refreshDonations} />;
       case "donation-create":
         return (
           <CreateDonationPage state={state} dispatch={dispatch} t={t} offlineDb={offlineDb} />

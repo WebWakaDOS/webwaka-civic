@@ -952,14 +952,27 @@ function DuesPage({
   dispatch,
   t,
   onRecordPayment,
+  onRefresh,
 }: {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   t: ReturnType<typeof getPartyTranslations>;
   onRecordPayment: () => void;
+  onRefresh?: () => Promise<void>;
 }) {
   const { dues } = state;
   const currentYear = new Date().getFullYear();
+
+  const hasPending = dues.some(
+    (d) => d.paymentStatus === "pending" || d.paymentStatus === "processing"
+  );
+
+  useEffect(() => {
+    if (!hasPending || !onRefresh) return;
+    const timer = setInterval(() => { void onRefresh(); }, 10_000);
+    return () => clearInterval(timer);
+  }, [hasPending, onRefresh]);
+
   const currentYearDues = dues.filter((d) => d.year === currentYear);
   const totalKobo = currentYearDues.reduce((sum, d) => sum + d.amountKobo, 0);
 
@@ -2406,6 +2419,7 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
             dispatch={dispatch}
             t={t}
             onRecordPayment={() => dispatch({ type: "SET_PAGE", page: "dues-create" })}
+            onRefresh={loadDues}
           />
         );
 

@@ -305,6 +305,41 @@ Provides reusable JWT verification and role-guard middleware for CIV-3 (Election
 ### Build Status
 - **0 TypeScript errors**, **0 Vite errors**, **448 KB bundle**
 
+## Phase 7 — Webhook Processing, Payment Reconciliation & Status Polling — COMPLETED (Weeks 39–45)
+
+### T001: CivicWebhookLog query helpers (`src/core/db/queries.ts`)
+- `insertWebhookLog()` — INSERT with UNIQUE constraint catch (returns false on duplicate)
+- `webhookLogExists()` — idempotency check by (provider, reference)
+- `updateWebhookLogStatus()` — mark event processed/error
+- `getWebhookLogs()` — paginated admin fetch by tenantId
+
+### T002: CIV-1 webhook upgrade (`src/modules/church-ngo/api/index.ts`)
+- Idempotency check via `CivicWebhookLog` before processing; returns `{ duplicate: true }` on retry
+- Inserts into `civic_webhook_log` on first receipt
+- Updates `civic_donations.paymentStatus = 'success' | 'failed'` on charge.success / charge.failed
+- Emits `payment.verified` or `payment.failed` event to event bus
+- New admin endpoint: `GET /api/civic/webhook-log?page=&limit=` — paginated webhook event log
+
+### T003: CIV-2 webhook handler (`src/modules/political-party/api/index.ts`)
+- `POST /webhooks/paystack` added before JWT auth middleware (no auth required)
+- Same idempotency + log pattern as CIV-1
+- Updates `party_dues.paymentStatus = 'success' | 'failed'`
+
+### T004: CIV-3 webhook handler (`src/modules/elections/api/index.ts`)
+- `POST /webhooks/paystack` added; auth middleware exempts `/webhooks/paystack` path
+- Updates `civic_campaign_donations.paymentStatus = 'success' | 'failed'`
+- `civic_campaign_donations` table DDL and ALTER TABLE migration added for `paymentStatus` column
+- `CampaignDonation` interface extended with `paymentStatus: PaymentStatus`
+- New donations now set `paymentStatus: paymentMethod === 'paystack' ? 'pending' : 'cash'`
+
+### T005: Frontend polling
+- `DonationsPage` (CIV-1): accepts `onRefresh` prop; polls every 10 s via `setInterval` when any donation has `paymentStatus = 'pending' | 'processing'`; clears timer on unmount
+- `DuesPage` (CIV-2): same pattern — polls `loadDues` every 10 s when pending
+- Both self-cancel when no pending items remain
+
+### Build Status
+- **0 TypeScript errors**, **0 Vite errors**, **449 KB bundle**
+
 ## Key Features
 - Mobile-first, offline-first PWA
 - Multi-tenancy (every record includes `tenantId`)

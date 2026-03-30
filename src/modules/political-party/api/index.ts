@@ -28,7 +28,11 @@ import {
 } from "../../../core/response";
 import { createDocumentService } from "../../../core/services/documents";
 import { createNotificationService } from "../../../core/services/notifications";
-import { createPaymentService } from "../../../core/services/payments";
+import {
+  createPaymentService,
+  verifyPaystackWebhook,
+  type PaystackWebhookBody,
+} from "../../../core/services/payments";
 import { CIVIC_NOTIFICATION_TEMPLATES } from "../../../core/services/notification-templates";
 import {
   getPartyOrganizationByTenant,
@@ -73,6 +77,8 @@ import {
   addCampaignTransaction,
   getCampaignTransactions,
   getCampaignFinanceSummary,
+  insertWebhookLog,
+  webhookLogExists,
   type D1Database,
 } from "../../../core/db/queries";
 import type {
@@ -127,6 +133,74 @@ function generateCardNumber(abbreviation: string, sequence: number): string {
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const app = new Hono<{ Bindings: Env }>();
+
+// ─── Paystack Webhook (no JWT — HMAC-SHA512 auth) ─────────────────────────────
+
+app.post("/webhooks/paystack", async (c) => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header("x-paystack-signature") ?? "";
+  const logger = createLogger("party-webhook");
+
+  const valid = await verifyPaystackWebhook(rawBody, signature, c.env.PAYSTACK_SECRET ?? "");
+  if (!valid) {
+    logger.warn("Paystack webhook signature invalid");
+    return new Response(JSON.stringify({ error: "Invalid signature" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  let body: PaystackWebhookBody;
+  try {
+    body = JSON.parse(rawBody) as PaystackWebhookBody;
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const referenceId = body.data.reference;
+  const tenantId = (body.data.metadata?.tenantId as string) ?? "platform";
+  const eventKey = `${body.event}:${referenceId}`;
+
+  const alreadyProcessed = await webhookLogExists(c.env.DB, "paystack", eventKey);
+  if (alreadyProcessed) {
+    logger.info("Paystack webhook duplicate — skipped", { event: body.event, reference: referenceId });
+    return new Response(JSON.stringify({ received: true, duplicate: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  await insertWebhookLog(c.env.DB, {
+    id: generateId(),
+    tenantId,
+    provider: "paystack",
+    event: body.event,
+    reference: eventKey,
+    status: "received",
+    processedAt: nowMs(),
+    createdAt: nowMs(),
+  });
+
+  const isSuccess = body.data.status === "success";
+  const newPaymentStatus = isSuccess ? "success" : "failed";
+
+  await c.env.DB.prepare(
+    `UPDATE party_dues SET paymentStatus = ?, updatedAt = ? WHERE id = ? AND deletedAt IS NULL`
+  ).bind(newPaymentStatus, nowMs(), referenceId).run();
+
+  await emitEvent(c.env, isSuccess ? "payment.verified" : "payment.failed", tenantId, {
+    reference: referenceId,
+    status: body.data.status,
+    metadata: body.data.metadata,
+  });
+
+  logger.info("Party Paystack webhook processed", { event: body.event, reference: referenceId, paymentStatus: newPaymentStatus });
+  return new Response(JSON.stringify({ received: true }), {
+    headers: { "Content-Type": "application/json" },
+  });
+});
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 

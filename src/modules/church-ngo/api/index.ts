@@ -70,6 +70,9 @@ import {
   updateExpenseStatus,
   updateMember,
   updateOrganization,
+  insertWebhookLog,
+  webhookLogExists,
+  getWebhookLogs,
   type D1Database,
 } from "../../../core/db/queries";
 import type {
@@ -137,12 +140,40 @@ app.post("/webhooks/paystack", async (c) => {
 
   const referenceId = body.data.reference;
   const tenantId = (body.data.metadata?.tenantId as string) ?? "platform";
+  const eventKey = `${body.event}:${referenceId}`;
 
-  if (body.data.status === "success") {
-    await c.env.DB.prepare(
-      "UPDATE civic_donations SET paymentReference = ?, updatedAt = ? WHERE id = ? AND deletedAt IS NULL"
-    ).bind(referenceId, nowMs(), referenceId).run();
+  // Idempotency — skip if we already processed this reference
+  const alreadyProcessed = await webhookLogExists(c.env.DB, "paystack", eventKey);
+  if (alreadyProcessed) {
+    logger.info("Paystack webhook duplicate — skipped", { event: body.event, reference: referenceId });
+    return new Response(JSON.stringify({ received: true, duplicate: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
+  // Log the incoming event first (idempotency guard)
+  await insertWebhookLog(c.env.DB, {
+    id: generateId(),
+    tenantId,
+    provider: "paystack",
+    event: body.event,
+    reference: eventKey,
+    status: "received",
+    processedAt: nowMs(),
+    createdAt: nowMs(),
+  });
+
+  const isSuccess = body.data.status === "success";
+  const newPaymentStatus = isSuccess ? "success" : "failed";
+
+  // Update civic_donations by matching the referenceId to the donation id
+  await c.env.DB.prepare(
+    `UPDATE civic_donations
+     SET paymentStatus = ?, paymentReference = ?, updatedAt = ?
+     WHERE id = ? AND deletedAt IS NULL`
+  ).bind(newPaymentStatus, referenceId, nowMs(), referenceId).run();
+
+  if (isSuccess) {
     await emitEvent(c.env, "payment.verified", tenantId, {
       reference: referenceId,
       amountKobo: body.data.amount,
@@ -158,10 +189,24 @@ app.post("/webhooks/paystack", async (c) => {
     });
   }
 
-  logger.info("Paystack webhook processed", { event: body.event, reference: referenceId, status: body.data.status });
+  logger.info("Paystack webhook processed", { event: body.event, reference: referenceId, status: body.data.status, paymentStatus: newPaymentStatus });
   return new Response(JSON.stringify({ received: true }), {
     headers: { "Content-Type": "application/json" },
   });
+});
+
+// GET /api/civic/webhook-log — admin-only paginated webhook event log
+app.get("/api/civic/webhook-log", async (c) => {
+  const payload = c.get("civicJwt" as never) as { role?: string; tenantId: string };
+  if (payload.role !== "admin") {
+    return c.json({ success: false, error: "Forbidden — admin role required" }, 403);
+  }
+  const url = new URL(c.req.url);
+  const limit = Math.min(Number(url.searchParams.get("limit") ?? "50"), 200);
+  const page  = Math.max(Number(url.searchParams.get("page") ?? "1"), 1);
+  const offset = (page - 1) * limit;
+  const logs = await getWebhookLogs(c.env.DB, payload.tenantId, limit, offset);
+  return c.json({ success: true, data: { logs, page, limit } });
 });
 
 // ─── DB Migration ─────────────────────────────────────────────────────────────

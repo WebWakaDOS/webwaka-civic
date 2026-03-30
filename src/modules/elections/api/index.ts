@@ -60,8 +60,14 @@ import {
   certifyCollation,
   getPublicElectionResults,
   getPublicCollationBreakdown,
+  insertWebhookLog,
+  webhookLogExists,
 } from "../../../core/db/queries";
 import type { D1Database } from "../../../core/db/queries";
+import {
+  verifyPaystackWebhook,
+  type PaystackWebhookBody,
+} from "../../../core/services/payments";
 
 export interface ElectionsEnv extends EventBusEnv {
   DB: D1Database;
@@ -72,9 +78,10 @@ export interface ElectionsEnv extends EventBusEnv {
 const app = new Hono<{ Bindings: ElectionsEnv }>();
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
-// Health check is public; all other endpoints require a valid JWT.
+// Health check and Paystack webhook are public; all other endpoints require JWT.
 app.use("*", async (c, next) => {
-  if (c.req.path.endsWith("/health")) return next();
+  const path = c.req.path;
+  if (path.endsWith("/health") || path === "/webhooks/paystack") return next();
   return electionAuthMiddleware()(c, next);
 });
 
@@ -152,6 +159,74 @@ async function logAuditEvent(
     logger.error("Failed to log audit event", { actionType, error: String(error) });
   }
 }
+
+// ─── Paystack Webhook (HMAC-SHA512 auth, no JWT) ─────────────────────────────
+
+app.post("/webhooks/paystack", async (c) => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header("x-paystack-signature") ?? "";
+
+  const valid = await verifyPaystackWebhook(rawBody, signature, (c.env as unknown as { PAYSTACK_SECRET?: string }).PAYSTACK_SECRET ?? "");
+  if (!valid) {
+    logger.warn("Elections Paystack webhook signature invalid");
+    return new Response(JSON.stringify({ error: "Invalid signature" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  let body: PaystackWebhookBody;
+  try {
+    body = JSON.parse(rawBody) as PaystackWebhookBody;
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const referenceId = body.data.reference;
+  const tenantId = (body.data.metadata?.tenantId as string) ?? "platform";
+  const electionId = (body.data.metadata?.electionId as string) ?? "";
+  const eventKey = `${body.event}:${referenceId}`;
+
+  const alreadyProcessed = await webhookLogExists(c.env.DB, "paystack", eventKey);
+  if (alreadyProcessed) {
+    logger.info("Elections Paystack webhook duplicate — skipped", { event: body.event, reference: referenceId });
+    return new Response(JSON.stringify({ received: true, duplicate: true }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  await insertWebhookLog(c.env.DB, {
+    id: uuidv4(),
+    tenantId,
+    provider: "paystack",
+    event: body.event,
+    reference: eventKey,
+    status: "received",
+    processedAt: Date.now(),
+    createdAt: Date.now(),
+  });
+
+  const isSuccess = body.data.status === "success";
+  const newPaymentStatus = isSuccess ? "success" : "failed";
+
+  await c.env.DB.prepare(
+    `UPDATE civic_campaign_donations SET paymentStatus = ?, updatedAt = ? WHERE id = ? AND deletedAt IS NULL`
+  ).bind(newPaymentStatus, Date.now(), referenceId).run();
+
+  await publishEvent(c.env, (isSuccess ? "payment.verified" : "payment.failed") as import("../../../core/event-bus/index").CivicEventType, tenantId, electionId, {
+    reference: referenceId,
+    status: body.data.status,
+    metadata: body.data.metadata,
+  });
+
+  logger.info("Elections Paystack webhook processed", { event: body.event, reference: referenceId, paymentStatus: newPaymentStatus });
+  return new Response(JSON.stringify({ received: true }), {
+    headers: { "Content-Type": "application/json" },
+  });
+});
 
 // ─── GROUP 1: Elections Management (8 endpoints) ─────────────────────────────────
 
@@ -1348,6 +1423,7 @@ app.post("/:electionId/donations", requireAdminOrManager, async (c) => {
       currency: currency || "NGN",
       paymentMethod,
       paymentRef,
+      paymentStatus: paymentMethod === "paystack" ? "pending" : "cash",
       status: "completed",
       donorName,
       donorEmail,
@@ -1358,8 +1434,8 @@ app.post("/:electionId/donations", requireAdminOrManager, async (c) => {
     };
 
     await c.env.DB.prepare(
-      `INSERT INTO civic_campaign_donations (id, tenantId, electionId, donorId, amountKobo, currency, paymentMethod, paymentRef, status, donorName, donorEmail, donorPhone, ndprConsent, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO civic_campaign_donations (id, tenantId, electionId, donorId, amountKobo, currency, paymentMethod, paymentRef, paymentStatus, status, donorName, donorEmail, donorPhone, ndprConsent, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       donation.id,
       donation.tenantId,
@@ -1369,6 +1445,7 @@ app.post("/:electionId/donations", requireAdminOrManager, async (c) => {
       donation.currency,
       donation.paymentMethod,
       donation.paymentRef,
+      donation.paymentStatus,
       donation.status,
       donation.donorName,
       donation.donorEmail,

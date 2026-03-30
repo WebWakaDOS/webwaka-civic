@@ -407,6 +407,7 @@ CREATE INDEX IF NOT EXISTS idx_civic_ndpr_audit_member ON civic_ndpr_audit_log(m
 -- paymentStatus: cash | pending | processing | success | failed
 ALTER TABLE civic_donations ADD COLUMN paymentStatus TEXT NOT NULL DEFAULT 'cash';
 ALTER TABLE party_dues ADD COLUMN paymentStatus TEXT NOT NULL DEFAULT 'cash';
+ALTER TABLE civic_campaign_donations ADD COLUMN paymentStatus TEXT NOT NULL DEFAULT 'pending';
 
 -- Phase 6: Paystack Webhook Idempotency Log (shared across all modules)
 CREATE TABLE IF NOT EXISTS civic_webhook_log (
@@ -1443,6 +1444,7 @@ export interface CampaignDonation {
   currency: string;
   paymentMethod: PaymentMethod;
   paymentRef?: string;
+  paymentStatus: PaymentStatus;
   status: DonationStatus;
   donorName: string;
   donorEmail?: string;
@@ -1669,6 +1671,7 @@ CREATE TABLE IF NOT EXISTS civic_campaign_donations (
   currency TEXT NOT NULL DEFAULT 'NGN',
   paymentMethod TEXT NOT NULL DEFAULT 'paystack',
   paymentReference TEXT,
+  paymentStatus TEXT NOT NULL DEFAULT 'pending',
   status TEXT NOT NULL DEFAULT 'pending',
   ndprConsent INTEGER NOT NULL DEFAULT 0,
   receiptUrl TEXT,
