@@ -1303,6 +1303,317 @@ app.post("/api/civic/members/import", async (c) => {
   }
 });
 
+// ─── T005-T008: Phase 5 — Analytics, Projects, Donors & NDPR ─────────────────
+
+// E07 — Donation Analytics
+app.get("/api/civic/analytics/donations", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("analytics-donations", payload.tenantId);
+  try {
+    const env = c.env as { DB: D1Database };
+    const db = env.DB;
+    const { tenantId, organizationId } = payload;
+    const nowMs2 = Date.now();
+    const thisYearStart = new Date(new Date().getFullYear(), 0, 1).getTime();
+    const lastYearStart = new Date(new Date().getFullYear() - 1, 0, 1).getTime();
+    const lastYearEnd = thisYearStart - 1;
+
+    // Monthly trend: last 12 calendar months
+    const months: Array<{ month: string; totalKobo: number; count: number }> = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(nowMs2);
+      d.setMonth(d.getMonth() - i);
+      const start = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999).getTime();
+      const row = await db.prepare(
+        `SELECT COALESCE(SUM(amountKobo),0) as total, COUNT(*) as cnt FROM civic_donations
+         WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL
+         AND donationDate >= ? AND donationDate <= ?`
+      ).bind(tenantId, organizationId, start, end).first<{ total: number; cnt: number }>();
+      months.push({
+        month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+        totalKobo: row?.total ?? 0,
+        count: row?.cnt ?? 0,
+      });
+    }
+
+    // Department breakdown
+    const deptRows = await db.prepare(
+      `SELECT d.id, d.name, COALESCE(SUM(don.amountKobo),0) as total
+       FROM civic_departments d
+       LEFT JOIN civic_members m ON m.departmentId = d.id AND m.tenantId = ?
+       LEFT JOIN civic_donations don ON don.memberId = m.id AND don.tenantId = ? AND don.deletedAt IS NULL
+       WHERE d.tenantId = ? AND d.organizationId = ? AND d.deletedAt IS NULL
+       GROUP BY d.id, d.name ORDER BY total DESC LIMIT 20`
+    ).bind(tenantId, tenantId, tenantId, organizationId).all<{ id: string; name: string; total: number }>();
+
+    // YoY
+    const [thisYearKobo, lastYearKobo] = await Promise.all([
+      db.prepare(`SELECT COALESCE(SUM(amountKobo),0) as t FROM civic_donations WHERE tenantId=? AND organizationId=? AND deletedAt IS NULL AND donationDate>=?`)
+        .bind(tenantId, organizationId, thisYearStart).first<{ t: number }>(),
+      db.prepare(`SELECT COALESCE(SUM(amountKobo),0) as t FROM civic_donations WHERE tenantId=? AND organizationId=? AND deletedAt IS NULL AND donationDate>=? AND donationDate<=?`)
+        .bind(tenantId, organizationId, lastYearStart, lastYearEnd).first<{ t: number }>(),
+    ]);
+    const tyKobo = thisYearKobo?.t ?? 0;
+    const lyKobo = lastYearKobo?.t ?? 0;
+    const percentChange = lyKobo > 0 ? Math.round(((tyKobo - lyKobo) / lyKobo) * 10000) / 100 : null;
+
+    // Top-givers tiers (major ≥ 500k/yr, regular ≥ 50k/yr, lapsed < 50k or nothing this year)
+    const tierRows = await db.prepare(
+      `SELECT memberId, SUM(amountKobo) as total FROM civic_donations
+       WHERE tenantId=? AND organizationId=? AND deletedAt IS NULL AND donationDate>=?
+       GROUP BY memberId`
+    ).bind(tenantId, organizationId, thisYearStart).all<{ memberId: string | null; total: number }>();
+    const tierList = tierRows.results ?? [];
+    const major = tierList.filter((r) => (r.total ?? 0) >= 500_000).length;
+    const regular = tierList.filter((r) => (r.total ?? 0) >= 50_000 && (r.total ?? 0) < 500_000).length;
+    const lapsed = tierList.filter((r) => (r.total ?? 0) < 50_000).length;
+
+    return apiSuccess({
+      monthlyTrend: months,
+      departmentBreakdown: (deptRows.results ?? []).map((d) => ({
+        departmentId: d.id,
+        name: d.name,
+        totalKobo: d.total,
+      })),
+      topGiversTiers: { major, regular, lapsed },
+      yoyComparison: { thisYearKobo: tyKobo, lastYearKobo: lyKobo, percentChange },
+    });
+  } catch (err) {
+    logger.error("Donation analytics failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+// F07 — Pledge Analytics
+app.get("/api/civic/analytics/pledges", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("analytics-pledges", payload.tenantId);
+  try {
+    const env = c.env as { DB: D1Database };
+    const db = env.DB;
+    const { tenantId, organizationId } = payload;
+    const nowMs3 = Date.now();
+    const d30 = nowMs3 - 30 * 24 * 60 * 60 * 1000;
+    const d60 = nowMs3 - 60 * 24 * 60 * 60 * 1000;
+    const d90 = nowMs3 - 90 * 24 * 60 * 60 * 1000;
+
+    const [summary, activePledges] = await Promise.all([
+      db.prepare(
+        `SELECT COALESCE(SUM(totalAmountKobo),0) as pledged, COALESCE(SUM(paidAmountKobo),0) as paid
+         FROM civic_pledges WHERE tenantId=? AND organizationId=? AND deletedAt IS NULL`
+      ).bind(tenantId, organizationId).first<{ pledged: number; paid: number }>(),
+      db.prepare(
+        `SELECT id, memberId, totalAmountKobo, paidAmountKobo, dueDate FROM civic_pledges
+         WHERE tenantId=? AND organizationId=? AND deletedAt IS NULL AND pledgeStatus != 'fulfilled'
+         ORDER BY (totalAmountKobo - paidAmountKobo) DESC LIMIT 100`
+      ).bind(tenantId, organizationId).all<{ id: string; memberId: string; totalAmountKobo: number; paidAmountKobo: number; dueDate: number | null }>(),
+    ]);
+
+    const pledged = summary?.pledged ?? 0;
+    const paid = summary?.paid ?? 0;
+    const fulfillmentPercent = pledged > 0 ? Math.round((paid / pledged) * 10000) / 100 : 0;
+
+    const pledgeList = activePledges.results ?? [];
+    const overdue = pledgeList.filter((p) => p.dueDate && p.dueDate < nowMs3);
+    const aging = {
+      bucket30d: { count: overdue.filter((p) => p.dueDate! >= d30).length, kobo: overdue.filter((p) => p.dueDate! >= d30).reduce((s, p) => s + (p.totalAmountKobo - p.paidAmountKobo), 0) },
+      bucket60d: { count: overdue.filter((p) => p.dueDate! >= d60 && p.dueDate! < d30).length, kobo: overdue.filter((p) => p.dueDate! >= d60 && p.dueDate! < d30).reduce((s, p) => s + (p.totalAmountKobo - p.paidAmountKobo), 0) },
+      bucket90dPlus: { count: overdue.filter((p) => p.dueDate! < d60).length, kobo: overdue.filter((p) => p.dueDate! < d60).reduce((s, p) => s + (p.totalAmountKobo - p.paidAmountKobo), 0) },
+    };
+    const topUnfulfilled = pledgeList.slice(0, 5).map((p) => ({
+      pledgeId: p.id,
+      memberId: p.memberId,
+      totalAmountKobo: p.totalAmountKobo,
+      paidAmountKobo: p.paidAmountKobo,
+      remainingKobo: p.totalAmountKobo - p.paidAmountKobo,
+      dueDate: p.dueDate,
+    }));
+
+    return apiSuccess({ totalPledgedKobo: pledged, totalPaidKobo: paid, fulfillmentPercent, aging, topUnfulfilled });
+  } catch (err) {
+    logger.error("Pledge analytics failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+// E06 — Projects
+app.get("/api/civic/projects", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const rows = await db.prepare(
+      `SELECT * FROM civic_projects WHERE tenantId=? AND organizationId=? AND deletedAt IS NULL ORDER BY createdAt DESC`
+    ).bind(payload.tenantId, payload.organizationId).all();
+    return apiSuccess({ projects: rows.results ?? [] });
+  } catch (err) {
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.post("/api/civic/projects", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("projects", payload.tenantId);
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const body = await c.req.json<{
+      name: string; donorName?: string; budgetKobo?: number;
+      startDate?: number; endDate?: number; description?: string; status?: string;
+    }>();
+    if (!body.name) return apiError("name is required", 400);
+    const id = generateId("prj");
+    const now2 = nowMs();
+    await db.prepare(
+      `INSERT INTO civic_projects (id, tenantId, organizationId, name, donorName, budgetKobo, currency, startDate, endDate, status, description, createdBy, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, 'NGN', ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, payload.tenantId, payload.organizationId, body.name, body.donorName ?? null,
+      body.budgetKobo ?? 0, body.startDate ?? null, body.endDate ?? null,
+      body.status ?? "draft", body.description ?? null, payload.userId, now2, now2).run();
+    logger.info("Project created", { projectId: id, name: body.name });
+    return apiSuccess({ projectId: id }, 201);
+  } catch (err) {
+    logger.error("Create project failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.get("/api/civic/projects/:id/summary", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const projectId = c.req.param("id");
+    const [project, donated, expenses] = await Promise.all([
+      db.prepare(`SELECT * FROM civic_projects WHERE id=? AND tenantId=? AND deletedAt IS NULL`)
+        .bind(projectId, payload.tenantId).first<{ id: string; name: string; budgetKobo: number; donorName: string | null }>(),
+      db.prepare(`SELECT COALESCE(SUM(amountKobo),0) as total, COUNT(*) as cnt FROM civic_donations WHERE projectId=? AND tenantId=? AND deletedAt IS NULL`)
+        .bind(projectId, payload.tenantId).first<{ total: number; cnt: number }>(),
+      db.prepare(`SELECT COALESCE(SUM(amountKobo),0) as total, COUNT(*) as cnt FROM civic_expenses WHERE projectId=? AND tenantId=? AND deletedAt IS NULL`)
+        .bind(projectId, payload.tenantId).first<{ total: number; cnt: number }>(),
+    ]);
+    if (!project) return apiError("Project not found", 404);
+    const donatedKobo = donated?.total ?? 0;
+    const expensesKobo = expenses?.total ?? 0;
+    return apiSuccess({
+      projectId, name: project.name, donorName: project.donorName,
+      budgetKobo: project.budgetKobo, totalDonatedKobo: donatedKobo,
+      totalExpensesKobo: expensesKobo, balance: donatedKobo - expensesKobo,
+      donationCount: donated?.cnt ?? 0, expenseCount: expenses?.cnt ?? 0,
+    });
+  } catch (err) {
+    return apiError("Internal server error", 500);
+  }
+});
+
+// F06 — Donor CRM
+app.get("/api/civic/donors", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const yearStart2 = new Date(new Date().getFullYear(), 0, 1).getTime();
+    const rows = await db.prepare(
+      `SELECT m.id, m.firstName, m.lastName, m.phone, m.email, m.isDonor, m.donorSince, m.donorNotes,
+       COALESCE(SUM(d.amountKobo),0) as totalGivenKobo,
+       MAX(d.donationDate) as lastGiftDate, COUNT(d.id) as giftCount,
+       COALESCE(SUM(CASE WHEN d.donationDate >= ? THEN d.amountKobo ELSE 0 END),0) as ytdKobo
+       FROM civic_members m
+       LEFT JOIN civic_donations d ON d.memberId=m.id AND d.tenantId=m.tenantId AND d.deletedAt IS NULL
+       WHERE m.tenantId=? AND m.organizationId=? AND m.deletedAt IS NULL AND m.isDonor=1
+       GROUP BY m.id ORDER BY totalGivenKobo DESC`
+    ).bind(yearStart2, payload.tenantId, payload.organizationId).all<{
+      id: string; firstName: string; lastName: string; phone: string | null; email: string | null;
+      isDonor: number; donorSince: number | null; donorNotes: string | null;
+      totalGivenKobo: number; lastGiftDate: number | null; giftCount: number; ytdKobo: number;
+    }>();
+    const donors = (rows.results ?? []).map((r) => ({
+      ...r,
+      donorTier: r.totalGivenKobo >= 500_000 ? "major" : r.totalGivenKobo >= 50_000 ? "regular" : "lapsed",
+    }));
+    return apiSuccess({ donors });
+  } catch (err) {
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.patch("/api/civic/members/:id/donor-profile", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const memberId = c.req.param("id");
+    const body = await c.req.json<{ isDonor?: boolean; donorNotes?: string; donorSince?: number }>();
+    const now3 = nowMs();
+    await db.prepare(
+      `UPDATE civic_members SET isDonor=?, donorNotes=?, donorSince=?, updatedAt=?
+       WHERE id=? AND tenantId=? AND deletedAt IS NULL`
+    ).bind(body.isDonor ? 1 : 0, body.donorNotes ?? null, body.donorSince ?? null, now3, memberId, payload.tenantId).run();
+    return apiSuccess({ updated: true });
+  } catch (err) {
+    return apiError("Internal server error", 500);
+  }
+});
+
+// E08 — NDPR Compliance
+app.post("/api/civic/members/:id/consent-withdraw", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("ndpr", payload.tenantId);
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const memberId = c.req.param("id");
+    const body = await c.req.json<{ consentVersion?: string; notes?: string }>().catch(() => ({}));
+    const now4 = nowMs();
+    const auditId = generateId("ndpr");
+    await db.prepare(
+      `UPDATE civic_members SET ndprConsent=0, ndprConsentDate=?, updatedAt=? WHERE id=? AND tenantId=? AND deletedAt IS NULL`
+    ).bind(now4, now4, memberId, payload.tenantId).run();
+    await db.prepare(
+      `INSERT INTO civic_ndpr_audit_log (id, tenantId, memberId, action, consentVersion, notes, performedBy, createdAt)
+       VALUES (?, ?, ?, 'consent_withdrawn', ?, ?, ?, ?)`
+    ).bind(auditId, payload.tenantId, memberId, (body as { consentVersion?: string }).consentVersion ?? null,
+      (body as { notes?: string }).notes ?? null, payload.userId, now4).run();
+    logger.info("Consent withdrawn", { memberId, auditId });
+    return apiSuccess({ withdrawn: true, auditId });
+  } catch (err) {
+    logger.error("Consent withdrawal failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.get("/api/civic/ndpr/audit-log", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const rows = await db.prepare(
+      `SELECT * FROM civic_ndpr_audit_log WHERE tenantId=? ORDER BY createdAt DESC LIMIT 200`
+    ).bind(payload.tenantId).all();
+    return apiSuccess({ entries: rows.results ?? [] });
+  } catch (err) {
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.post("/api/civic/members/:id/data-erasure-request", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("ndpr-erasure", payload.tenantId);
+  try {
+    const db = (c.env as { DB: D1Database }).DB;
+    const memberId = c.req.param("id");
+    const now5 = nowMs();
+    const auditId = generateId("ndpr");
+    // Soft-delete the member record and withdraw consent
+    await db.prepare(
+      `UPDATE civic_members SET deletedAt=?, ndprConsent=0, ndprConsentDate=?, updatedAt=? WHERE id=? AND tenantId=? AND deletedAt IS NULL`
+    ).bind(now5, now5, now5, memberId, payload.tenantId).run();
+    await db.prepare(
+      `INSERT INTO civic_ndpr_audit_log (id, tenantId, memberId, action, requestType, notes, performedBy, createdAt)
+       VALUES (?, ?, ?, 'data_deleted', 'erasure_request', 'Member data soft-deleted per NDPR Art.17', ?, ?)`
+    ).bind(auditId, payload.tenantId, memberId, payload.userId, now5).run();
+    logger.info("Data erasure completed", { memberId, auditId });
+    return apiSuccess({ erased: true, auditId });
+  } catch (err) {
+    logger.error("Data erasure failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
 // ─── CORE-1 Sync Endpoint ─────────────────────────────────────────────────────
 
 app.post("/api/civic/sync", async (c) => {

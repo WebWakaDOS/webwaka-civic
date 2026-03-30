@@ -2012,6 +2012,136 @@ app.get("/api/public/elections/:id/results/breakdown", async (c) => {
   }
 });
 
+// ─── T009: EL12 — Election Post-Analytics ────────────────────────────────────
+
+app.get("/api/elections/:id/analytics", electionAuthMiddleware, async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const db = env.DB;
+    const electionId = c.req.param("id");
+    const jwtPayload = (c as unknown as { get: (k: string) => { tenantId: string } }).get("electionJwt");
+    const tenantId: string = jwtPayload?.tenantId ?? "";
+
+    const [electionRow, candidateRows, voteCountRow, stationRows] = await Promise.all([
+      db.prepare(`SELECT id, name, status, votingStartAt, votingEndAt FROM civic_elections WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`)
+        .bind(electionId, tenantId).first<{ id: string; name: string; status: string; votingStartAt: number; votingEndAt: number }>(),
+      db.prepare(`SELECT id, name, voteCount FROM civic_candidates WHERE electionId = ? AND tenantId = ? AND status = 'approved' AND deletedAt IS NULL ORDER BY voteCount DESC`)
+        .bind(electionId, tenantId).all<{ id: string; name: string; voteCount: number }>(),
+      db.prepare(`SELECT COUNT(DISTINCT voterId) as cast FROM civic_votes WHERE electionId = ? AND tenantId = ? AND deletedAt IS NULL`)
+        .bind(electionId, tenantId).first<{ cast: number }>(),
+      db.prepare(`SELECT id, name, capacity, votesCount FROM civic_voting_stations WHERE electionId = ? AND tenantId = ? AND deletedAt IS NULL ORDER BY votesCount DESC`)
+        .bind(electionId, tenantId).all<{ id: string; name: string; capacity: number; votesCount: number }>(),
+    ]);
+
+    if (!electionRow) return c.json({ success: false, error: "Election not found" }, 404);
+
+    const candidates = candidateRows.results ?? [];
+    const stations = stationRows.results ?? [];
+    const totalVotesCast = voteCountRow?.cast ?? 0;
+    const eligibleVoters = stations.reduce((sum, s) => sum + (s.capacity ?? 0), 0);
+    const turnoutPercent = eligibleVoters > 0 ? Math.round((totalVotesCast / eligibleVoters) * 10000) / 100 : 0;
+
+    const totalVotes = candidates.reduce((s, c) => s + (c.voteCount ?? 0), 0);
+    const results = candidates.map((c, idx) => ({
+      candidateId: c.id,
+      name: c.name,
+      voteCount: c.voteCount ?? 0,
+      votePercent: totalVotes > 0 ? Math.round(((c.voteCount ?? 0) / totalVotes) * 10000) / 100 : 0,
+      rank: idx + 1,
+    }));
+
+    const winner = results[0] ?? null;
+    const runnerUp = results[1] ?? null;
+    const winMargin = winner && runnerUp ? {
+      winnerId: winner.candidateId,
+      runnerUpId: runnerUp.candidateId,
+      marginVotes: winner.voteCount - runnerUp.voteCount,
+      marginPercent: Math.round((winner.votePercent - runnerUp.votePercent) * 100) / 100,
+    } : null;
+
+    const geographic = stations.map((s) => ({
+      stationId: s.id,
+      stationName: s.name,
+      votesCast: s.votesCount ?? 0,
+    }));
+
+    return c.json({ success: true, data: {
+      electionId,
+      title: electionRow.name,
+      status: electionRow.status,
+      turnout: { eligibleVoters, votesCast: totalVotesCast, turnoutPercent },
+      results,
+      winMargin,
+      geographic,
+    }});
+  } catch (err) {
+    logger.error("Election analytics failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+// ─── T009: CE10 — Public Election Comparison (no auth) ───────────────────────
+
+app.get("/api/public/elections/compare", async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const db = env.DB;
+    const idsParam = new URL(c.req.url).searchParams.get("ids") ?? "";
+    const ids = idsParam.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 2);
+
+    if (ids.length < 2) {
+      return c.json({ success: false, error: "Provide exactly 2 election IDs via ?ids=id1,id2" }, 400);
+    }
+
+    const [electionRows, candidateA, candidateB] = await Promise.all([
+      Promise.all(ids.map((id) =>
+        db.prepare(`SELECT id, name, votingStartAt FROM civic_elections WHERE id = ? AND deletedAt IS NULL`)
+          .bind(id).first<{ id: string; name: string; votingStartAt: number }>()
+      )),
+      db.prepare(`SELECT id, name, voteCount FROM civic_candidates WHERE electionId = ? AND status = 'approved' AND deletedAt IS NULL ORDER BY voteCount DESC`)
+        .bind(ids[0]).all<{ id: string; name: string; voteCount: number }>(),
+      db.prepare(`SELECT id, name, voteCount FROM civic_candidates WHERE electionId = ? AND status = 'approved' AND deletedAt IS NULL ORDER BY voteCount DESC`)
+        .bind(ids[1]).all<{ id: string; name: string; voteCount: number }>(),
+    ]);
+
+    const [eA, eB] = electionRows;
+    if (!eA || !eB) return c.json({ success: false, error: "One or both elections not found" }, 404);
+
+    const candA = candidateA.results ?? [];
+    const candB = candidateB.results ?? [];
+
+    // Build candidate comparison — match by name
+    const nameSet = new Set([...candA.map((c) => c.name), ...candB.map((c) => c.name)]);
+    const totalA = candA.reduce((s, c) => s + (c.voteCount ?? 0), 0);
+    const totalB = candB.reduce((s, c) => s + (c.voteCount ?? 0), 0);
+
+    const candidateComparison = Array.from(nameSet).map((name) => {
+      const a = candA.find((c) => c.name === name);
+      const b = candB.find((c) => c.name === name);
+      const pctA = totalA > 0 && a ? ((a.voteCount ?? 0) / totalA) * 100 : 0;
+      const pctB = totalB > 0 && b ? ((b.voteCount ?? 0) / totalB) * 100 : 0;
+      return {
+        name,
+        votes: { [ids[0]]: a?.voteCount ?? 0, [ids[1]]: b?.voteCount ?? 0 },
+        pct: { [ids[0]]: Math.round(pctA * 100) / 100, [ids[1]]: Math.round(pctB * 100) / 100 },
+        swingPercent: Math.round((pctB - pctA) * 100) / 100,
+      };
+    });
+
+    return c.json({ success: true, data: {
+      elections: [
+        { id: eA.id, title: eA.name, date: eA.votingStartAt },
+        { id: eB.id, title: eB.name, date: eB.votingStartAt },
+      ],
+      candidateComparison,
+      totalVotes: { [ids[0]]: totalA, [ids[1]]: totalB },
+    }});
+  } catch (err) {
+    logger.error("Election comparison failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
 /**
  * GET /api/elections/health
  * Health check

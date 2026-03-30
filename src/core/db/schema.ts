@@ -353,6 +353,55 @@ CREATE TABLE IF NOT EXISTS civic_budgets (
 CREATE INDEX IF NOT EXISTS idx_civic_budgets_tenant ON civic_budgets(tenantId);
 CREATE INDEX IF NOT EXISTS idx_civic_budgets_org ON civic_budgets(organizationId);
 CREATE INDEX IF NOT EXISTS idx_civic_budgets_year ON civic_budgets(year);
+
+-- E06: Multi-Fund / Project Accounting
+CREATE TABLE IF NOT EXISTS civic_projects (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  donorName TEXT,
+  budgetKobo INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  startDate INTEGER,
+  endDate INTEGER,
+  status TEXT NOT NULL DEFAULT 'draft',
+  description TEXT,
+  createdBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER,
+  FOREIGN KEY (organizationId) REFERENCES civic_organizations(id)
+);
+CREATE INDEX IF NOT EXISTS idx_civic_projects_tenant ON civic_projects(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civic_projects_org ON civic_projects(organizationId);
+
+-- Add projectId column to donations and expenses (ALTER TABLE for existing DBs)
+-- These are no-ops if columns already exist
+-- Note: D1 ALTER TABLE ADD COLUMN is supported
+ALTER TABLE civic_donations ADD COLUMN projectId TEXT REFERENCES civic_projects(id);
+ALTER TABLE civic_expenses ADD COLUMN projectId TEXT REFERENCES civic_projects(id);
+
+-- F06: Donor profile fields on members
+ALTER TABLE civic_members ADD COLUMN isDonor INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE civic_members ADD COLUMN donorSince INTEGER;
+ALTER TABLE civic_members ADD COLUMN donorNotes TEXT;
+
+-- E08: NDPR Consent Audit Log
+CREATE TABLE IF NOT EXISTS civic_ndpr_audit_log (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  memberId TEXT NOT NULL,
+  action TEXT NOT NULL,
+  consentVersion TEXT,
+  requestType TEXT,
+  notes TEXT,
+  performedBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  FOREIGN KEY (memberId) REFERENCES civic_members(id)
+);
+CREATE INDEX IF NOT EXISTS idx_civic_ndpr_audit_tenant ON civic_ndpr_audit_log(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civic_ndpr_audit_member ON civic_ndpr_audit_log(memberId);
 `;
 
 // ─── TypeScript Interfaces ────────────────────────────────────────────────────
@@ -422,6 +471,9 @@ export interface CivicMember {
   ndprConsentDate?: number;
   photoUrl?: string;
   notes?: string;
+  isDonor?: number;
+  donorSince?: number;
+  donorNotes?: string;
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
@@ -440,6 +492,7 @@ export interface CivicDonation {
   paymentMethod: string;
   paymentReference?: string;
   eventId?: string;
+  projectId?: string;
   recordedBy: string;
   donationDate: number;
   createdAt: number;
@@ -556,6 +609,7 @@ export interface CivicExpense {
   tenantId: string;
   organizationId: string;
   departmentId?: string;
+  projectId?: string;
   category: CivicExpenseCategory | string;
   description: string;
   amountKobo: number;
@@ -584,6 +638,45 @@ export interface CivicBudget {
   notes?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export type CivicProjectStatus = "draft" | "active" | "closed";
+
+export interface CivicProject {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  name: string;
+  donorName?: string;
+  budgetKobo: number;
+  currency: string;
+  startDate?: number;
+  endDate?: number;
+  status: CivicProjectStatus;
+  description?: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export type NdprAuditAction =
+  | "consent_given"
+  | "consent_withdrawn"
+  | "data_requested"
+  | "data_deleted"
+  | "record_accessed";
+
+export interface CivicNdprAuditLog {
+  id: string;
+  tenantId: string;
+  memberId: string;
+  action: NdprAuditAction;
+  consentVersion?: string;
+  requestType?: string;
+  notes?: string;
+  performedBy: string;
+  createdAt: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -1254,6 +1254,87 @@ app.get("/api/party/campaign-finance/:id/summary", async (c) => {
   }
 });
 
+// ─── T008: P09 — Hierarchy Analytics ─────────────────────────────────────────
+
+app.get("/api/party/analytics/hierarchy", async (c) => {
+  const payload = c.get(PARTY_JWT_KEY as never) as PartyJWTPayload;
+  const logger = createLogger("party-analytics", payload.tenantId);
+
+  try {
+    const env = c.env as PartyEnv;
+    const db = env.DB as D1Database;
+    const structureId = new URL(c.req.url).searchParams.get("structureId");
+    const nowMs = Date.now();
+    const ninetyDaysAgo = nowMs - 90 * 24 * 60 * 60 * 1000;
+    const yearStart = new Date(new Date().getFullYear(), 0, 1).getTime();
+
+    // Fetch the target structure(s): if structureId given, that node + children; else top-level
+    let structures: Array<{ id: string; name: string; level: string; parentId: string | null }>;
+
+    if (structureId) {
+      const nodeRes = await db.prepare(
+        `SELECT id, name, level, parentId FROM party_structures
+         WHERE (id = ? OR parentId = ?) AND tenantId = ? AND deletedAt IS NULL`
+      ).bind(structureId, structureId, payload.tenantId).all();
+      structures = (nodeRes.results ?? []) as typeof structures;
+    } else {
+      const rootRes = await db.prepare(
+        `SELECT id, name, level, parentId FROM party_structures
+         WHERE tenantId = ? AND deletedAt IS NULL AND (parentId IS NULL OR parentId = '')
+         LIMIT 50`
+      ).bind(payload.tenantId).all();
+      structures = (rootRes.results ?? []) as typeof structures;
+    }
+
+    if (!structures.length) {
+      return apiSuccess({ node: null, children: [] });
+    }
+
+    // Gather analytics for each structure node
+    const enriched = await Promise.all(structures.map(async (s) => {
+      const [memberCount, activeMemberCount, duesKobo, meetingCount] = await Promise.all([
+        db.prepare(
+          `SELECT COUNT(*) as cnt FROM party_members WHERE structureId = ? AND tenantId = ? AND deletedAt IS NULL`
+        ).bind(s.id, payload.tenantId).first<{ cnt: number }>(),
+        db.prepare(
+          `SELECT COUNT(*) as cnt FROM party_members WHERE structureId = ? AND tenantId = ? AND status = 'active' AND deletedAt IS NULL`
+        ).bind(s.id, payload.tenantId).first<{ cnt: number }>(),
+        db.prepare(
+          `SELECT COALESCE(SUM(pd.amountKobo), 0) as total FROM party_dues pd
+           INNER JOIN party_members pm ON pd.memberId = pm.id
+           WHERE pm.structureId = ? AND pm.tenantId = ? AND pd.paidAt >= ? AND pd.deletedAt IS NULL`
+        ).bind(s.id, payload.tenantId, yearStart).first<{ total: number }>(),
+        db.prepare(
+          `SELECT COUNT(*) as cnt FROM party_meetings WHERE structureId = ? AND tenantId = ? AND scheduledAt >= ? AND deletedAt IS NULL`
+        ).bind(s.id, payload.tenantId, ninetyDaysAgo).first<{ cnt: number }>(),
+      ]);
+
+      return {
+        structureId: s.id,
+        name: s.name,
+        level: s.level,
+        parentId: s.parentId ?? null,
+        memberCount: memberCount?.cnt ?? 0,
+        activeMemberCount: activeMemberCount?.cnt ?? 0,
+        duesCollectedKoboYTD: duesKobo?.total ?? 0,
+        meetingCountLast90d: meetingCount?.cnt ?? 0,
+      };
+    }));
+
+    // Separate root node from children (when structureId given, first result is the node itself)
+    if (structureId) {
+      const node = enriched.find((s) => s.structureId === structureId) ?? null;
+      const children = enriched.filter((s) => s.structureId !== structureId);
+      return apiSuccess({ node, children });
+    }
+
+    return apiSuccess({ node: null, children: enriched });
+  } catch (err) {
+    logger.error("Hierarchy analytics failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
 // ─── Export ───────────────────────────────────────────────────────────────────
 
 export default app;
