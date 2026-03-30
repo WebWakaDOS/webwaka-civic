@@ -20,6 +20,7 @@ import {
   fundraisingApi,
   resultsApi,
   analyticsApi,
+  adminApi,
   type Election,
   type Candidate,
   type Volunteer,
@@ -30,6 +31,8 @@ import {
   type PublicResults,
   type ElectionAnalytics,
   type ElectionComparison,
+  type ElectionAuditLogEntry,
+  type VoterCard,
 } from "./apiClient";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -47,7 +50,9 @@ type Page =
   | "collation"
   | "admin"
   | "analytics"
-  | "compare-elections";
+  | "compare-elections"
+  | "audit-log"
+  | "voter-card";
 
 interface AppState {
   page: Page;
@@ -68,6 +73,9 @@ interface AppState {
   publicResults: PublicResults | null;
   // Pagination
   electionSearch: string;
+  // Admin / Voter
+  auditLogs: ElectionAuditLogEntry[];
+  voterCard: VoterCard | null;
 }
 
 type Action =
@@ -82,7 +90,9 @@ type Action =
   | { type: "SET_VOLUNTEERS"; volunteers: Volunteer[]; tasks: VolunteerTask[] }
   | { type: "SET_FUNDRAISING"; donations: Donation[]; expenses: Expense[]; budget: BudgetStatus | null }
   | { type: "SET_RESULTS"; results: PublicResults | null }
-  | { type: "SET_ELECTION_SEARCH"; search: string };
+  | { type: "SET_ELECTION_SEARCH"; search: string }
+  | { type: "SET_AUDIT_LOGS"; logs: ElectionAuditLogEntry[] }
+  | { type: "SET_VOTER_CARD"; card: VoterCard | null };
 
 function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
@@ -98,6 +108,8 @@ function reducer(s: AppState, a: Action): AppState {
     case "SET_FUNDRAISING": return { ...s, donations: a.donations, expenses: a.expenses, budgetStatus: a.budget, isLoading: false };
     case "SET_RESULTS":    return { ...s, publicResults: a.results, isLoading: false };
     case "SET_ELECTION_SEARCH": return { ...s, electionSearch: a.search };
+    case "SET_AUDIT_LOGS":  return { ...s, auditLogs: a.logs, isLoading: false };
+    case "SET_VOTER_CARD":  return { ...s, voterCard: a.card, isLoading: false };
     default: return s;
   }
 }
@@ -119,6 +131,8 @@ const initialState: AppState = {
   budgetStatus: null,
   publicResults: null,
   electionSearch: "",
+  auditLogs: [],
+  voterCard: null,
 };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -781,6 +795,20 @@ function AdminPage({ state, dispatch, tenantId }: { state: AppState; dispatch: R
         <div style={{ fontSize: "13px", color: C.textMuted }}>Tenant ID: <strong>{tenantId || "—"}</strong></div>
         <div style={{ fontSize: "13px", color: C.textMuted, marginTop: "4px" }}>Module: <strong>CIV-3 Elections & Campaigns</strong></div>
       </div>
+
+      <div style={S.card}>
+        <div style={{ fontWeight: 600, marginBottom: "8px" }}>Audit & Participation</div>
+        <button style={{ ...S.btn(C.primary, true), marginBottom: "8px" }}
+          onClick={() => dispatch({ type: "SET_PAGE", page: "audit-log" })}
+          disabled={!electionId}>
+          📋 Election Audit Log
+        </button>
+        <button style={S.btn("#6c757d", true)}
+          onClick={() => dispatch({ type: "SET_PAGE", page: "voter-card" })}
+          disabled={!electionId}>
+          🪪 My Voter Card
+        </button>
+      </div>
     </div>
   );
 }
@@ -1037,6 +1065,137 @@ function CompareElectionsPage({
   );
 }
 
+// ─── Election Audit Log Page ───────────────────────────────────────────────────
+
+function AuditLogPage({
+  state,
+  dispatch,
+  electionId,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+  electionId: string;
+}) {
+  const [loading, setLoading] = useState(state.auditLogs.length === 0);
+
+  useEffect(() => {
+    if (!electionId) return;
+    adminApi.auditLog(electionId).then((r) => {
+      if (r.success && r.data) dispatch({ type: "SET_AUDIT_LOGS", logs: r.data.logs });
+      setLoading(false);
+    });
+  }, [electionId, dispatch]);
+
+  const actionColor = (a: string) =>
+    a.includes("created") || a.includes("approved") ? C.success :
+    a.includes("deleted") || a.includes("rejected") ? C.error : C.primary;
+
+  return (
+    <div>
+      <div style={S.sectionTitle}>
+        <button style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", marginRight: "8px" }} onClick={() => dispatch({ type: "SET_PAGE", page: "admin" })}>←</button>
+        📋 Election Audit Log
+      </div>
+      {loading ? <Spinner /> : (
+        <>
+          {state.auditLogs.length === 0 && (
+            <div style={{ color: C.textMuted, textAlign: "center" as const, padding: "32px" }}>No audit events for this election.</div>
+          )}
+          {state.auditLogs.map((log) => (
+            <div key={log.id} style={S.card}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                <span style={{ fontWeight: 600, fontSize: "13px", color: actionColor(log.actionType) }}>{log.actionType.replace(/_/g, " ")}</span>
+                <span style={{ fontSize: "11px", color: C.textMuted }}>{new Date(log.createdAt).toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}</span>
+              </div>
+              {log.actorRole && <div style={{ fontSize: "11px", color: C.textMuted }}>Role: {log.actorRole}</div>}
+              {log.details && <div style={{ fontSize: "12px", marginTop: "4px", color: C.text }}>{log.details}</div>}
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Voter Card Page ───────────────────────────────────────────────────────────
+
+function VoterCardPage({
+  state,
+  dispatch,
+  electionId,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+  electionId: string;
+}) {
+  const [loading, setLoading] = useState(!state.voterCard);
+
+  useEffect(() => {
+    if (!electionId || state.voterCard?.electionId === electionId) return;
+    adminApi.myVoterCard(electionId).then((r) => {
+      dispatch({ type: "SET_VOTER_CARD", card: r.success ? r.data : null });
+      setLoading(false);
+    });
+  }, [electionId, state.voterCard, dispatch]);
+
+  const card = state.voterCard;
+
+  return (
+    <div>
+      <div style={S.sectionTitle}>
+        <button style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", marginRight: "8px" }} onClick={() => dispatch({ type: "SET_PAGE", page: "admin" })}>←</button>
+        🪪 My Voter Card
+      </div>
+      {loading ? <Spinner /> : !card ? (
+        <div style={S.card}>
+          <div style={{ textAlign: "center" as const, padding: "24px", color: C.textMuted }}>
+            <div style={{ fontSize: "48px", marginBottom: "8px" }}>🗳️</div>
+            <div>You have not cast a vote in this election.</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ ...S.card, background: "linear-gradient(135deg, #6B21A8, #9333EA)", color: "#fff", borderRadius: "16px", padding: "24px", maxWidth: "360px", margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "20px" }}>
+            <span style={{ fontSize: "32px" }}>🗳️</span>
+            <div>
+              <div style={{ fontSize: "14px", fontWeight: 700, opacity: 0.8 }}>VOTER PARTICIPATION CARD</div>
+              <div style={{ fontSize: "11px", opacity: 0.7 }}>WebWaka Elections</div>
+            </div>
+          </div>
+          <div style={{ marginBottom: "8px" }}>
+            <div style={{ fontSize: "11px", opacity: 0.7, marginBottom: "2px" }}>ELECTION</div>
+            <div style={{ fontSize: "16px", fontWeight: 700 }}>{card.electionName}</div>
+          </div>
+          <div style={{ display: "flex", gap: "16px", marginBottom: "8px" }}>
+            <div>
+              <div style={{ fontSize: "11px", opacity: 0.7, marginBottom: "2px" }}>TYPE</div>
+              <div style={{ fontSize: "13px", fontWeight: 600 }}>{card.electionType.replace(/_/g, " ")}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: "11px", opacity: 0.7, marginBottom: "2px" }}>STATUS</div>
+              <div style={{ fontSize: "13px", fontWeight: 600 }}>{card.electionStatus.toUpperCase()}</div>
+            </div>
+          </div>
+          <div style={{ marginBottom: "8px" }}>
+            <div style={{ fontSize: "11px", opacity: 0.7, marginBottom: "2px" }}>VOTED ON</div>
+            <div style={{ fontSize: "13px" }}>{new Date(card.castAt).toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}</div>
+          </div>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.3)", paddingTop: "12px", marginTop: "4px" }}>
+            <div style={{ fontSize: "11px", opacity: 0.7, marginBottom: "2px" }}>VOTER ID (PARTIAL)</div>
+            <div style={{ fontFamily: "monospace", fontSize: "14px", letterSpacing: "2px" }}>{card.voterId.toUpperCase()}</div>
+          </div>
+          {card.verificationHash && (
+            <div style={{ marginTop: "8px" }}>
+              <div style={{ fontSize: "11px", opacity: 0.7, marginBottom: "2px" }}>VERIFICATION HASH</div>
+              <div style={{ fontFamily: "monospace", fontSize: "10px", wordBreak: "break-all" as const }}>{card.verificationHash.slice(0, 32)}…</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const NAV = [
   { page: "elections" as Page, icon: "🗳️", label: "Elections" },
   { page: "volunteers" as Page, icon: "🙋", label: "Volunteers" },
@@ -1139,6 +1298,8 @@ export function ElectionsApp({ tenantId, onLogout }: { tenantId: string; onLogou
       case "admin":           return <AdminPage state={state} dispatch={dispatch} tenantId={tenantId} />;
       case "analytics":       return <ElectionAnalyticsPage state={state} dispatch={dispatch} />;
       case "compare-elections": return <CompareElectionsPage state={state} dispatch={dispatch} />;
+      case "audit-log":       return <AuditLogPage state={state} dispatch={dispatch} electionId={electionId} />;
+      case "voter-card":      return <VoterCardPage state={state} dispatch={dispatch} electionId={electionId} />;
       default:                return <ElectionsPage state={state} dispatch={dispatch} onSelect={handleSelectElection} />;
     }
   };

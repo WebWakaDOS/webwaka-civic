@@ -340,6 +340,39 @@ Provides reusable JWT verification and role-guard middleware for CIV-3 (Election
 ### Build Status
 - **0 TypeScript errors**, **0 Vite errors**, **449 KB bundle**
 
+## Phase 8 — Rate Limiting, Admin Log Pages & Voter Card — COMPLETED (Weeks 46–52)
+
+### T001: Rate limiting utility (`src/core/rateLimit.ts`)
+- Sliding-window `Map<string, number[]>` rate limiter — Cloudflare Worker compatible (no Node.js built-ins)
+- `checkRateLimit(key, maxHits, windowMs): boolean` — returns false when limit exceeded
+- `getClientIp(request): string` — reads `CF-Connecting-IP` → `X-Forwarded-For` → `"unknown"`
+- Applied to `POST /webhooks/paystack` in all 3 modules (100 req/min per IP, bucket keys `wh:civ1:`, `wh:civ2:`, `wh:civ3:`)
+
+### T002: CIV-1 Admin log pages (`src/modules/church-ngo/ui.tsx`)
+- `WebhookLogPage`: fetches `GET /api/civic/webhook-log?limit=50`; card-list of provider/event/status/timestamp; status badge (green=processed, red=error)
+- `NdprAuditPage`: fetches `GET /api/civic/ndpr/audit-log`; card-list of consent/access/export/delete events; action icon + performer + notes
+- Both accessible via "Admin Logs" section at bottom of Analytics page
+- `CivicWebhookLog[]` and `CivicNdprAuditLog[]` added to AppState / Action / reducer / initial state
+
+### T003: CIV-3 election audit log — backend + frontend
+- Backend: `GET /api/elections/:id/audit-log?limit=&offset=` (admin only, `requireAdminOrManager`) → queries `civic_election_audit_logs`
+- Frontend: `ElectionAuditLogEntry[]` added to AppState; `AuditLogPage` component — action-type colour-coded cards (created/approved=green, deleted/rejected=red, else purple)
+- Accessible via "📋 Election Audit Log" button in AdminPage → Admin tab
+
+### T004: CIV-2 party activity log — backend + frontend
+- Backend: `GET /api/party/activity-log?page=&limit=` — UNION of `civic_party_members` + `party_dues` + `party_nominations` ORDER BY createdAt DESC
+- `ActivityEvent` interface exported from `political-party/apiClient.ts`; `getActivityLog()` method added to `PartyApiClient`
+- Frontend: `ActivityLogPage` — timeline cards with emoji icons (👤 join, 💰 dues, 🏅 nomination)
+- Accessible via "📅 Party Activity Log" button in HierarchyAnalyticsPage (Analytics tab)
+
+### T005: CIV-3 voter participation card
+- Backend: `GET /api/elections/:id/my-voter-card` — reads `civic_votes` for current voter (`jwtPayload.sub`); returns election details + castAt + verificationHash; 404 if not voted; candidate choice NOT revealed
+- Frontend: `VoterCardPage` — styled gradient purple card showing election name, voter ID (first 8 chars), type, status, vote timestamp, optional verification hash
+- Accessible via "🪪 My Voter Card" button in AdminPage
+
+### Build Status
+- **0 TypeScript errors**, **0 Vite errors**, **462 KB bundle**
+
 ## Key Features
 - Mobile-first, offline-first PWA
 - Multi-tenancy (every record includes `tenantId`)

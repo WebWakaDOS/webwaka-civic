@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import { emitEvent } from "@webwaka/core";
 import { createEventBus, PARTY_EVENTS, type EventBusEnv } from "../../../core/event-bus/index";
 import { createLogger } from "../../../core/logger";
+import { checkRateLimit, getClientIp } from "../../../core/rateLimit";
 import {
   createCivicAuthMiddleware,
   CIVIC_JWT_KEY,
@@ -137,6 +138,14 @@ const app = new Hono<{ Bindings: Env }>();
 // ─── Paystack Webhook (no JWT — HMAC-SHA512 auth) ─────────────────────────────
 
 app.post("/webhooks/paystack", async (c) => {
+  const ip = getClientIp(c.req.raw);
+  if (!checkRateLimit(`wh:civ2:${ip}`, 100, 60_000)) {
+    return new Response(JSON.stringify({ error: "Too many requests" }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const rawBody = await c.req.text();
   const signature = c.req.header("x-paystack-signature") ?? "";
   const logger = createLogger("party-webhook");
@@ -1507,6 +1516,40 @@ app.get("/api/party/analytics/hierarchy", async (c) => {
     return apiSuccess({ node: null, children: enriched });
   } catch (err) {
     logger.error("Hierarchy analytics failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+// ─── Party Activity Log ────────────────────────────────────────────────────────
+
+/**
+ * GET /api/party/activity-log?page=&limit=
+ * Admin: recent party activity — member joins, dues payments, nominations.
+ * Returns a unified time-sorted list of events from existing tables.
+ */
+app.get("/api/party/activity-log", async (c) => {
+  const { tenantId } = (c as unknown as { get: (k: string) => { tenantId: string } }).get("partyJwt") as { tenantId: string };
+  const limit = Math.min(Number(c.req.query("limit") ?? 40), 100);
+  const offset = (Math.max(Number(c.req.query("page") ?? 1), 1) - 1) * limit;
+
+  try {
+    const sql = `
+      SELECT 'member_join' AS type, id, tenantId, fullName AS subject, createdAt, 'new_member' AS detail FROM civic_party_members
+        WHERE tenantId = ? AND deletedAt IS NULL
+      UNION ALL
+      SELECT 'dues_paid' AS type, id, tenantId, receiptNumber AS subject, paidAt AS createdAt, paymentMethod AS detail FROM party_dues
+        WHERE tenantId = ? AND deletedAt IS NULL
+      UNION ALL
+      SELECT 'nomination' AS type, id, tenantId, position AS subject, createdAt, status AS detail FROM party_nominations
+        WHERE tenantId = ? AND deletedAt IS NULL
+      ORDER BY createdAt DESC
+      LIMIT ? OFFSET ?
+    `;
+    const rows = await c.env.DB.prepare(sql).bind(tenantId, tenantId, tenantId, limit, offset).all<{ type: string; id: string; tenantId: string; subject: string; createdAt: number; detail: string }>();
+
+    return apiSuccess({ events: rows.results ?? [] });
+  } catch (err) {
+    logger.error("Activity log fetch failed", { error: String(err) });
     return apiError("Internal server error", 500);
   }
 });

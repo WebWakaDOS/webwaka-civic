@@ -282,3 +282,38 @@ export const analyticsApi = {
   compareElections: (ids: string[]) =>
     electionFetch<ElectionComparison>(`/api/public/elections/compare?ids=${ids.join(",")}`),
 };
+
+// ─── Admin & Voter Card ───────────────────────────────────────────────────────
+
+export interface ElectionAuditLogEntry {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  actionType: string;
+  actorId?: string;
+  actorRole?: string;
+  details?: string;
+  createdAt: number;
+}
+
+export interface VoterCard {
+  voterId: string;
+  electionId: string;
+  electionName: string;
+  electionType: string;
+  electionStatus: string;
+  startDate: number;
+  endDate: number;
+  castAt: number;
+  verificationHash: string | null;
+}
+
+export const adminApi = {
+  auditLog: (electionId: string, limit = 50, offset = 0) =>
+    electionFetch<{ logs: ElectionAuditLogEntry[]; total: number }>(
+      `/api/elections/${electionId}/audit-log?limit=${limit}&offset=${offset}`
+    ),
+
+  myVoterCard: (electionId: string) =>
+    electionFetch<VoterCard>(`/api/elections/${electionId}/my-voter-card`),
+};

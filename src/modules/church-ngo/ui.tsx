@@ -34,8 +34,10 @@ import type {
   CivicEvent,
   CivicGrant,
   CivicMember,
+  CivicNdprAuditLog,
   CivicOrganization,
   CivicPledge,
+  CivicWebhookLog,
 } from "../../core/db/schema.ts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -63,7 +65,9 @@ type Page =
   | "portal-giving"
   | "portal-pledges"
   | "portal-events"
-  | "portal-profile";
+  | "portal-profile"
+  | "webhook-log"
+  | "ndpr-audit";
 
 interface AppState {
   page: Page;
@@ -84,6 +88,8 @@ interface AppState {
     activePledges: number;
     upcomingEvents: number;
   } | null;
+  webhookLogs: CivicWebhookLog[];
+  ndprAuditLogs: CivicNdprAuditLog[];
 }
 
 type Action =
@@ -98,7 +104,9 @@ type Action =
   | { type: "SET_PLEDGES"; pledges: CivicPledge[] }
   | { type: "SET_EVENTS"; events: CivicEvent[] }
   | { type: "SET_GRANTS"; grants: CivicGrant[] }
-  | { type: "SET_DASHBOARD_STATS"; stats: AppState["dashboardStats"] };
+  | { type: "SET_DASHBOARD_STATS"; stats: AppState["dashboardStats"] }
+  | { type: "SET_WEBHOOK_LOGS"; logs: CivicWebhookLog[] }
+  | { type: "SET_NDPR_AUDIT_LOGS"; logs: CivicNdprAuditLog[] };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -126,6 +134,10 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, grants: action.grants, isLoading: false };
     case "SET_DASHBOARD_STATS":
       return { ...state, dashboardStats: action.stats, isLoading: false };
+    case "SET_WEBHOOK_LOGS":
+      return { ...state, webhookLogs: action.logs, isLoading: false };
+    case "SET_NDPR_AUDIT_LOGS":
+      return { ...state, ndprAuditLogs: action.logs, isLoading: false };
     default:
       return state;
   }
@@ -145,6 +157,8 @@ const initialState: AppState = {
   events: [],
   grants: [],
   dashboardStats: null,
+  webhookLogs: [],
+  ndprAuditLogs: [],
 };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -1551,6 +1565,16 @@ function AnalyticsPage({ dispatch }: { dispatch: React.Dispatch<Action> }) {
         onClick={() => dispatch({ type: "SET_PAGE", page: "projects" })}>
         📁 View Projects
       </button>
+
+      <div style={{ fontSize: "13px", fontWeight: 700, color: colors.textMuted, marginTop: "20px", marginBottom: "8px" }}>Admin Logs</div>
+      <button style={{ ...s.btn, backgroundColor: "#6c757d", color: "#fff", padding: "10px 20px", borderRadius: "10px", border: "none", cursor: "pointer", width: "100%", marginBottom: "8px" }}
+        onClick={() => dispatch({ type: "SET_PAGE", page: "webhook-log" })}>
+        🔔 Payment Webhook Log
+      </button>
+      <button style={{ ...s.btn, backgroundColor: "#6c757d", color: "#fff", padding: "10px 20px", borderRadius: "10px", border: "none", cursor: "pointer", width: "100%" }}
+        onClick={() => dispatch({ type: "SET_PAGE", page: "ndpr-audit" })}>
+        🔒 NDPR Audit Trail
+      </button>
     </div>
   );
 }
@@ -1935,6 +1959,95 @@ function PortalProfilePage({ state, dispatch }: { state: AppState; dispatch: Rea
   );
 }
 
+// ─── Admin Log Pages ──────────────────────────────────────────────────────────
+
+function WebhookLogPage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const [loading, setLoading] = useState(state.webhookLogs.length === 0);
+
+  useEffect(() => {
+    if (state.webhookLogs.length > 0) return;
+    apiGet<{ logs: CivicWebhookLog[] }>("/webhook-log?limit=50").then((r) => {
+      if (r.success && r.data) dispatch({ type: "SET_WEBHOOK_LOGS", logs: r.data.logs });
+      setLoading(false);
+    });
+  }, [dispatch]);
+
+  const statusColor = (s: string) =>
+    s === "processed" ? colors.success : s === "error" ? colors.error : colors.textMuted;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>🔔 Payment Webhook Log</div>
+      </div>
+      {loading ? <LoadingSpinner /> : (
+        <>
+          {state.webhookLogs.length === 0 && (
+            <div style={{ color: colors.textMuted, fontSize: "14px", textAlign: "center" as const, padding: "32px" }}>No webhook events recorded yet.</div>
+          )}
+          {state.webhookLogs.map((log) => (
+            <div key={log.id} style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: "10px", padding: "12px", marginBottom: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>{log.event}</span>
+                <span style={{ fontSize: "11px", fontWeight: 600, color: statusColor(log.status), textTransform: "uppercase" as const }}>{log.status}</span>
+              </div>
+              <div style={{ fontSize: "11px", color: colors.textMuted, marginBottom: "2px" }}>Ref: {log.reference}</div>
+              <div style={{ fontSize: "11px", color: colors.textMuted }}>Provider: {log.provider} · {new Date(log.createdAt).toLocaleString("en-NG", { timeZone: "Africa/Lagos" })}</div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function NdprAuditPage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const [loading, setLoading] = useState(state.ndprAuditLogs.length === 0);
+
+  useEffect(() => {
+    if (state.ndprAuditLogs.length > 0) return;
+    apiGet<{ logs: CivicNdprAuditLog[] }>("/ndpr/audit-log").then((r) => {
+      if (r.success && r.data) dispatch({ type: "SET_NDPR_AUDIT_LOGS", logs: r.data.logs });
+      setLoading(false);
+    });
+  }, [dispatch]);
+
+  const actionIcon = (a: string) =>
+    a === "consent_granted" ? "✅" :
+    a === "consent_revoked" ? "❌" :
+    a === "data_export" ? "📤" :
+    a === "data_deleted" ? "🗑️" : "📋";
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>🔒 NDPR Audit Trail</div>
+      </div>
+      <div style={{ fontSize: "12px", color: colors.textMuted, marginBottom: "12px" }}>All data-privacy actions recorded for NDPR compliance.</div>
+      {loading ? <LoadingSpinner /> : (
+        <>
+          {state.ndprAuditLogs.length === 0 && (
+            <div style={{ color: colors.textMuted, fontSize: "14px", textAlign: "center" as const, padding: "32px" }}>No NDPR audit events recorded yet.</div>
+          )}
+          {state.ndprAuditLogs.map((log) => (
+            <div key={log.id} style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: "10px", padding: "12px", marginBottom: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ fontWeight: 600, fontSize: "13px" }}>{actionIcon(log.action)} {log.action.replace(/_/g, " ")}</span>
+                <span style={{ fontSize: "11px", color: colors.textMuted }}>{new Date(log.createdAt).toLocaleDateString("en-NG", { timeZone: "Africa/Lagos" })}</span>
+              </div>
+              <div style={{ fontSize: "11px", color: colors.textMuted, marginBottom: "2px" }}>Member ID: {log.memberId.slice(0, 8)}…</div>
+              {log.notes && <div style={{ fontSize: "11px", color: colors.text }}>{log.notes}</div>}
+              <div style={{ fontSize: "11px", color: colors.textMuted }}>By: {log.performedBy}</div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Language Switcher ────────────────────────────────────────────────────────
 
 function LanguageSwitcher({
@@ -2098,6 +2211,10 @@ export function ChurchNGOApp() {
         return <PortalEventsPage state={state} dispatch={dispatch} />;
       case "portal-profile":
         return <PortalProfilePage state={state} dispatch={dispatch} />;
+      case "webhook-log":
+        return <WebhookLogPage state={state} dispatch={dispatch} />;
+      case "ndpr-audit":
+        return <NdprAuditPage state={state} dispatch={dispatch} />;
       default:
         return <DashboardPage state={state} dispatch={dispatch} t={t} />;
     }

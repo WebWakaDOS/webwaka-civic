@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import { emitEvent } from "@webwaka/core";
 import { createEventBus, type EventBusEnv } from "../../../core/event-bus/index";
 import { createLogger } from "../../../core/logger";
+import { checkRateLimit, getClientIp } from "../../../core/rateLimit";
 import {
   createCivicAuthMiddleware,
   CIVIC_JWT_KEY,
@@ -116,6 +117,14 @@ app.get("/health", (c) => {
 // HMAC-SHA512 signature verification replaces JWT auth for this endpoint.
 
 app.post("/webhooks/paystack", async (c) => {
+  const ip = getClientIp(c.req.raw);
+  if (!checkRateLimit(`wh:civ1:${ip}`, 100, 60_000)) {
+    return new Response(JSON.stringify({ error: "Too many requests" }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const rawBody = await c.req.text();
   const signature = c.req.header("x-paystack-signature") ?? "";
 

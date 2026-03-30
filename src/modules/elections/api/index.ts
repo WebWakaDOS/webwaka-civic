@@ -17,6 +17,7 @@
 import { Hono } from "hono";
 import { v4 as uuidv4 } from "uuid";
 import { createLogger } from "../../../core/logger";
+import { checkRateLimit, getClientIp } from "../../../core/rateLimit";
 const logger = createLogger("elections");
 import { CIVIC_EVENTS, type EventBusEnv } from "../../../core/event-bus/index";
 import {
@@ -163,6 +164,14 @@ async function logAuditEvent(
 // ─── Paystack Webhook (HMAC-SHA512 auth, no JWT) ─────────────────────────────
 
 app.post("/webhooks/paystack", async (c) => {
+  const ip = getClientIp(c.req.raw);
+  if (!checkRateLimit(`wh:civ3:${ip}`, 100, 60_000)) {
+    return new Response(JSON.stringify({ error: "Too many requests" }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const rawBody = await c.req.text();
   const signature = c.req.header("x-paystack-signature") ?? "";
 
@@ -2310,6 +2319,81 @@ app.get("/api/public/elections/compare", async (c) => {
     }});
   } catch (err) {
     logger.error("Election comparison failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Election Audit Log ───────────────────────────────────────────────────────
+
+/**
+ * GET /api/elections/:id/audit-log?limit=&offset=
+ * Admin: paginated audit trail for one election
+ */
+app.get("/api/elections/:id/audit-log", requireAdminOrManager, async (c) => {
+  const electionId = c.req.param("id");
+  const jwtPayload = (c as unknown as { get: (k: string) => { tenantId: string } }).get("electionJwt");
+  const tenantId = jwtPayload.tenantId;
+  const limit = Math.min(Number(c.req.query("limit") ?? 50), 100);
+  const offset = Number(c.req.query("offset") ?? 0);
+
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT * FROM civic_election_audit_logs
+       WHERE tenantId = ? AND electionId = ?
+       ORDER BY createdAt DESC
+       LIMIT ? OFFSET ?`
+    ).bind(tenantId, electionId, limit, offset).all<ElectionAuditLog>();
+
+    return c.json({ success: true, data: { logs: rows.results ?? [], total: rows.results?.length ?? 0 } });
+  } catch (err) {
+    logger.error("Election audit log fetch failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Voter Participation Card ─────────────────────────────────────────────────
+
+/**
+ * GET /api/elections/:id/my-voter-card
+ * Returns the authenticated voter's participation record for a given election.
+ * Does NOT reveal candidate choice — only proves participation.
+ */
+app.get("/api/elections/:id/my-voter-card", async (c) => {
+  const electionId = c.req.param("id");
+  const jwtPayload = (c as unknown as { get: (k: string) => { tenantId: string; sub: string } }).get("electionJwt");
+  const tenantId = jwtPayload.tenantId;
+  const voterId = jwtPayload.sub;
+
+  try {
+    const election = await c.env.DB.prepare(
+      `SELECT id, name, type, status, startDate, endDate FROM civic_elections WHERE id = ? AND tenantId = ? LIMIT 1`
+    ).bind(electionId, tenantId).first<{ id: string; name: string; type: string; status: string; startDate: number; endDate: number }>();
+
+    if (!election) return c.json({ success: false, error: "Election not found" }, 404);
+
+    const vote = await c.env.DB.prepare(
+      `SELECT id, castAt, verificationHash FROM civic_votes
+       WHERE electionId = ? AND voterId = ? AND tenantId = ? LIMIT 1`
+    ).bind(electionId, voterId, tenantId).first<{ id: string; castAt: number; verificationHash?: string }>();
+
+    if (!vote) return c.json({ success: false, error: "No vote found for this election" }, 404);
+
+    return c.json({
+      success: true,
+      data: {
+        voterId: voterId.slice(0, 8),
+        electionId: election.id,
+        electionName: election.name,
+        electionType: election.type,
+        electionStatus: election.status,
+        startDate: election.startDate,
+        endDate: election.endDate,
+        castAt: vote.castAt,
+        verificationHash: vote.verificationHash ?? null,
+      },
+    });
+  } catch (err) {
+    logger.error("Voter card fetch failed", { error: String(err) });
     return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });

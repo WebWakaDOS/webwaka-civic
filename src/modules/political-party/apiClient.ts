@@ -50,6 +50,15 @@ export interface ApiError {
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
 
+export interface ActivityEvent {
+  type: "member_join" | "dues_paid" | "nomination" | string;
+  id: string;
+  tenantId: string;
+  subject: string;
+  createdAt: number;
+  detail: string;
+}
+
 // ─── Request/Response Types ───────────────────────────────────────────────────
 
 export interface PartyMembersResponse {
@@ -390,6 +399,10 @@ export class PartyApiClient {
   }>> {
     const qs = structureId ? `?structureId=${encodeURIComponent(structureId)}` : "";
     return this.request("GET", `/api/party/analytics/hierarchy${qs}`);
+  }
+
+  async getActivityLog(page = 1, limit = 40): Promise<ApiResponse<{ events: ActivityEvent[] }>> {
+    return this.request("GET", `/api/party/activity-log?page=${page}&limit=${limit}`);
   }
 }
 

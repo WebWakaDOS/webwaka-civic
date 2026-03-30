@@ -20,7 +20,7 @@
  * 6. ID Cards — issue, view, revoke
  */
 import React, { useCallback, useEffect, useReducer, useState } from "react";
-import { createPartyApiClient, type PartyMemberFilters, type PartyNomination, type PartyCampaignAccount, type PartyCampaignSummary } from "./apiClient";
+import { createPartyApiClient, type ActivityEvent, type PartyMemberFilters, type PartyNomination, type PartyCampaignAccount, type PartyCampaignSummary } from "./apiClient";
 import { getPartyTranslations, LOCALE_NAMES, SUPPORTED_LOCALES, type PartyLocale } from "./i18n";
 import {
   formatWATDate,
@@ -64,7 +64,8 @@ type Page =
   | "campaign-finance"
   | "finance-account-create"
   | "finance-transactions"
-  | "analytics";
+  | "analytics"
+  | "activity-log";
 
 interface DashboardStats {
   totalMembers: number;
@@ -104,6 +105,7 @@ interface AppState {
   selectedCampaignAccount: PartyCampaignAccount | null;
   campaignSummary: PartyCampaignSummary | null;
   nominationStatusFilter: string;
+  activityLog: ActivityEvent[];
 }
 
 type Action =
@@ -128,7 +130,8 @@ type Action =
   | { type: "SET_CAMPAIGN_ACCOUNTS"; accounts: PartyCampaignAccount[] }
   | { type: "SET_SELECTED_CAMPAIGN_ACCOUNT"; account: PartyCampaignAccount | null }
   | { type: "SET_CAMPAIGN_SUMMARY"; summary: PartyCampaignSummary | null }
-  | { type: "SET_NOMINATION_STATUS_FILTER"; status: string };
+  | { type: "SET_NOMINATION_STATUS_FILTER"; status: string }
+  | { type: "SET_ACTIVITY_LOG"; events: ActivityEvent[] };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -176,6 +179,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, campaignSummary: action.summary, isLoading: false };
     case "SET_NOMINATION_STATUS_FILTER":
       return { ...state, nominationStatusFilter: action.status };
+    case "SET_ACTIVITY_LOG":
+      return { ...state, activityLog: action.events, isLoading: false };
     default:
       return state;
   }
@@ -208,6 +213,7 @@ const initialState: AppState = {
   selectedCampaignAccount: null,
   campaignSummary: null,
   nominationStatusFilter: "",
+  activityLog: [],
 };
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
@@ -2093,6 +2099,77 @@ function HierarchyAnalyticsPage({
           ))}
         </>
       )}
+
+      <div style={{ marginTop: "20px" }}>
+        <div style={{ fontSize: "13px", fontWeight: 700, color: colors.textMuted, marginBottom: "8px" }}>Admin Logs</div>
+        <button
+          style={{ ...s.btn("primary"), width: "100%" }}
+          onClick={() => dispatch({ type: "SET_PAGE", page: "activity-log" })}>
+          📅 Party Activity Log
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Party Activity Log Page ───────────────────────────────────────────────────
+
+function ActivityLogPage({
+  state,
+  dispatch,
+  api,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+  api: ReturnType<typeof createPartyApiClient>;
+}) {
+  const [loading, setLoading] = useState(state.activityLog.length === 0);
+
+  useEffect(() => {
+    if (state.activityLog.length > 0) return;
+    api.getActivityLog().then((r) => {
+      if (r.success && r.data) dispatch({ type: "SET_ACTIVITY_LOG", events: r.data.events });
+      setLoading(false);
+    });
+  }, [api, dispatch]);
+
+  const eventIcon = (type: string) =>
+    type === "member_join" ? "👤" : type === "dues_paid" ? "💰" : type === "nomination" ? "🏅" : "📋";
+
+  const eventLabel = (type: string) =>
+    type === "member_join" ? "Member Joined" : type === "dues_paid" ? "Dues Paid" : type === "nomination" ? "Nomination" : type;
+
+  const eventColor = (type: string) =>
+    type === "member_join" ? colors.success : type === "dues_paid" ? colors.primary : colors.accent;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>📅 Party Activity Log</div>
+      </div>
+      <div style={{ fontSize: "12px", color: colors.textMuted, marginBottom: "12px" }}>Recent member joins, dues payments and nominations.</div>
+      {loading ? (
+        <div style={{ textAlign: "center" as const, padding: "32px", color: colors.textMuted }}>Loading…</div>
+      ) : state.activityLog.length === 0 ? (
+        <div style={{ textAlign: "center" as const, padding: "32px", color: colors.textMuted }}>No activity recorded yet.</div>
+      ) : (
+        state.activityLog.map((ev) => (
+          <div key={ev.id} style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: "10px", padding: "12px", marginBottom: "10px", display: "flex", gap: "12px", alignItems: "flex-start" }}>
+            <div style={{ fontSize: "22px", flexShrink: 0 }}>{eventIcon(ev.type)}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                <span style={{ fontWeight: 600, fontSize: "13px", color: eventColor(ev.type) }}>{eventLabel(ev.type)}</span>
+                <span style={{ fontSize: "11px", color: colors.textMuted }}>{new Date(ev.createdAt).toLocaleDateString("en-NG", { timeZone: "Africa/Lagos" })}</span>
+              </div>
+              <div style={{ fontSize: "12px", color: colors.text }}>{ev.subject}</div>
+              {ev.detail && ev.detail !== "new_member" && (
+                <div style={{ fontSize: "11px", color: colors.textMuted, marginTop: "2px" }}>{ev.detail}</div>
+              )}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -2539,6 +2616,9 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
 
       case "analytics":
         return <HierarchyAnalyticsPage api={api} t={t} dispatch={dispatch} />;
+
+      case "activity-log":
+        return <ActivityLogPage state={state} dispatch={dispatch} api={api} />;
 
       default:
         return <DashboardPage state={state} dispatch={dispatch} t={t} />;
