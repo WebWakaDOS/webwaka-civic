@@ -1,703 +1,544 @@
 /**
- * WebWaka Civic — CIV-3 Phase 4: Campaign Fundraising & Expense Tracking API
- * 12 endpoints for donations, expenses, budget management, and compliance reporting
- * 
- * Blueprint Reference: Part 2 (Cloudflare Edge Infrastructure - Workers)
- * Invariants: Offline First, Nigeria First, Build Once Use Infinitely
- * 
+ * WebWaka Civic — CIV-3 Campaign Fundraising & Expense Tracking API
+ * Blueprint Reference: Part 10.9 (Civic & Political Suite — Elections & Campaigns)
+ * Blueprint Reference: Part 9.2 (Universal Architecture Standards)
+ *
+ * Platform Conventions:
+ * - Auth: JWT via electionAuthMiddleware (same key as elections module)
+ * - Paystack: events only via PaymentService — NO direct SDK calls
+ * - Webhooks: HMAC-SHA512 via verifyPaystackWebhook from core/services/payments
+ * - DB: D1 inline queries (no ORM)
+ * - Monetary values: kobo integers (NGN * 100)
+ *
  * Endpoints:
- * 1-5: Donation Management (5 endpoints)
- * 6-9: Expense Management (4 endpoints)
- * 10-11: Budget Management (2 endpoints)
- * 12: Compliance & Reporting (1 endpoint)
+ *  1.  POST /elections/:id/donations              — Record donation
+ *  2.  GET  /elections/:id/donations              — List donations
+ *  3.  GET  /elections/:id/donations/:donId       — Get donation
+ *  4.  POST /elections/:id/donations/:donId/refund — Refund donation
+ *  5.  POST /elections/:id/donations/webhook      — Paystack webhook (no auth)
+ *  6.  POST /elections/:id/expenses               — Create expense
+ *  7.  GET  /elections/:id/expenses               — List expenses
+ *  8.  PATCH /elections/:id/expenses/:expId/approve — Approve expense
+ *  9.  PATCH /elections/:id/expenses/:expId/reject  — Reject expense
+ *  10. POST /elections/:id/budget                 — Create budget
+ *  11. GET  /elections/:id/budget                 — Budget status
+ *  12. GET  /elections/:id/compliance-report      — Compliance report
  */
 
 import { Hono } from "hono";
 import { createLogger } from "../../../core/logger";
 import { v4 as uuidv4 } from "uuid";
+import type { D1Database } from "../../../core/db/queries";
+import {
+  electionAuthMiddleware,
+  requireAdminOrManager,
+} from "../../../core/rbac";
+import {
+  createPaymentService,
+  verifyPaystackWebhook,
+} from "../../../core/services/payments";
+import { createNotificationService } from "../../../core/services/notifications";
+import { CIVIC_NOTIFICATION_TEMPLATES } from "../../../core/services/notification-templates";
+import { emitEvent } from "@webwaka/core";
+import type { EventBusEnv } from "../../../core/event-bus/index";
 
-const logger = createLogger("fundraising-routes");
-const fundraisingRouter = new Hono();
+const logger = createLogger("fundraising");
 
-// ─── Helper Functions ───────────────────────────────────────────────────────
+// ─── Environment ──────────────────────────────────────────────────────────────
 
-/**
- * Verify Paystack webhook signature
- */
-function verifyPaystackSignature(payload: string, signature: string, secret: string): boolean {
-  const crypto = require("crypto");
-  const hash = crypto.createHmac("sha512", secret).update(payload).digest("hex");
-  return hash === signature;
+interface FundraisingEnv extends EventBusEnv {
+  DB: D1Database;
+  JWT_SECRET: string;
+  PAYSTACK_SECRET: string;
 }
 
-/**
- * Generate Paystack payment link
- */
-async function generatePaystackLink(
-  amount: number,
-  email: string,
-  reference: string,
-  metadata: any,
-  paystackKey: string
-): Promise<string> {
-  // In production, call Paystack API
-  // For now, return mock URL
-  return `https://checkout.paystack.com/pay/${reference}`;
+const fundraisingRouter = new Hono<{ Bindings: FundraisingEnv }>();
+
+// ─── Auth Middleware ──────────────────────────────────────────────────────────
+// Webhook path is public (verified by HMAC-SHA512 signature); all other routes need JWT.
+fundraisingRouter.use("*", async (c, next) => {
+  if (c.req.path.endsWith("/webhook") || c.req.path.endsWith("/webhook/paystack")) {
+    return next();
+  }
+  return electionAuthMiddleware()(c, next);
+});
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+function getElectionJwt(c: Parameters<Parameters<typeof fundraisingRouter.post>[1]>[0]): {
+  tenantId: string;
+  sub: string;
+  role: string;
+} {
+  return (c as unknown as { get: (k: string) => { tenantId: string; sub: string; role: string } })
+    .get("electionJwt") ?? { tenantId: "", sub: "system", role: "viewer" };
 }
 
-/**
- * Create receipt URL
- */
-function generateReceiptUrl(donationId: string, tenantId: string): string {
-  return `/receipts/${tenantId}/${donationId}.pdf`;
-}
+// ─── 1. Record Donation ───────────────────────────────────────────────────────
 
-/**
- * Create audit log entry
- */
-async function createAuditLogEntry(
-  db: any,
-  electionId: string,
-  tenantId: string,
-  action: string,
-  entityType: string,
-  entityId: string,
-  details?: any
-): Promise<void> {
-  logger.info(`Audit: ${action}`, {
-    electionId,
-    entityType,
-    entityId,
-    details,
-  });
-}
-
-// ─── Endpoint 1: Create Donation ────────────────────────────────────────────
-
-fundraisingRouter.post("/elections/:electionId/donations", async (c) => {
+fundraisingRouter.post("/elections/:electionId/donations", requireAdminOrManager, async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const { donorName, donorEmail, donorPhone, amount, currency, paymentMethod, campaignId } =
-      await c.req.json();
+    const body = await c.req.json<{
+      donorName: string;
+      donorEmail?: string;
+      donorPhone?: string;
+      amountKobo: number;
+      currency?: string;
+      paymentMethod?: string;
+      campaignId?: string;
+      ndprConsent?: boolean;
+    }>();
 
-    if (!tenantId || !donorName || !amount) {
-      return c.json(
-        { error: "Missing required fields: donorName, amount" },
-        400
-      );
+    if (!body.donorName || !body.amountKobo || body.amountKobo <= 0) {
+      return c.json({ success: false, error: "donorName and amountKobo (positive) are required" }, 400);
     }
 
     const donationId = uuidv4();
-    const paymentReference = `PAY-${donationId.substring(0, 8).toUpperCase()}`;
+    const paymentRef = `PAY-${donationId.slice(0, 8).toUpperCase()}`;
     const now = Date.now();
 
-    const donation = {
-      id: donationId,
-      electionId,
-      campaignId: campaignId || null,
-      tenantId,
-      donorId: uuidv4(),
-      donorName,
-      donorEmail: donorEmail || null,
-      donorPhone: donorPhone || null,
-      amount,
-      currency: currency || "NGN",
-      paymentMethod: paymentMethod || "paystack",
-      paymentReference,
-      status: "pending",
-      ndprConsent: false,
-      dataProcessingConsent: false,
-      createdAt: now,
-      updatedAt: now,
-    };
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_campaign_donations (id, tenantId, electionId, campaignId, donorName,
+         donorEmail, donorPhone, amountKobo, currency, paymentMethod, paymentReference, status,
+         ndprConsent, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+      )
+      .bind(
+        donationId, jwt.tenantId, electionId, body.campaignId ?? null,
+        body.donorName, body.donorEmail ?? null, body.donorPhone ?? null,
+        body.amountKobo, body.currency ?? "NGN",
+        body.paymentMethod ?? "paystack", paymentRef,
+        body.ndprConsent ? 1 : 0, now, now
+      )
+      .run();
 
-    // Generate payment link if online payment
-    let paymentLink = null;
-    if (paymentMethod === "paystack" || !paymentMethod) {
-      paymentLink = await generatePaystackLink(
-        amount,
-        donorEmail || "donor@example.com",
-        paymentReference,
-        { electionId, campaignId, donorName },
-        c.env.PAYSTACK_KEY || ""
-      );
+    // Emit Paystack payment initialization via platform service (no direct SDK call)
+    if ((body.paymentMethod ?? "paystack") === "paystack" && body.donorEmail) {
+      const paySvc = createPaymentService(c.env);
+      await paySvc.initializePayment({
+        tenantId: jwt.tenantId,
+        organizationId: electionId,
+        amountKobo: body.amountKobo,
+        customerEmail: body.donorEmail,
+        customerPhone: body.donorPhone,
+        category: "campaign_donation",
+        referenceId: donationId,
+        metadata: { electionId, campaignId: body.campaignId, donorName: body.donorName },
+      });
     }
 
-    logger.info("Donation created", {
-      electionId,
-      donationId,
-      donorName,
-      amount,
-      paymentMethod,
+    await emitEvent(c.env, "campaign.donation.created", jwt.tenantId, {
+      donationId, electionId, amountKobo: body.amountKobo, donorName: body.donorName,
     });
 
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "donation_created",
-      "donation",
-      donationId,
-      { donorName, amount, currency }
-    );
+    // Receipt notification
+    if (body.donorPhone || body.donorEmail) {
+      const notifSvc = createNotificationService(c.env);
+      await notifSvc.requestNotification({
+        tenantId: jwt.tenantId,
+        organizationId: electionId,
+        recipientPhone: body.donorPhone,
+        recipientEmail: body.donorEmail,
+        channel: body.donorPhone ? "whatsapp" : "email",
+        templateId: CIVIC_NOTIFICATION_TEMPLATES.CAMPAIGN_DONATION_RECEIVED,
+        data: { donationId, amountKobo: body.amountKobo, donorName: body.donorName },
+        priority: "high",
+        idempotencyKey: `campaign-donation-receipt:${donationId}`,
+      }).catch((e) => logger.error("Donation receipt notification failed", { error: String(e) }));
+    }
 
-    return c.json({
-      success: true,
-      donation,
-      paymentLink,
-    });
-  } catch (error) {
-    logger.error("Donation creation error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    logger.info("Campaign donation created", { donationId, electionId, amountKobo: body.amountKobo });
+    return c.json({ success: true, data: { id: donationId, paymentReference: paymentRef, status: "pending" } });
+  } catch (err) {
+    logger.error("Donation creation failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 2: List Donations ─────────────────────────────────────────────
+// ─── 2. List Donations ────────────────────────────────────────────────────────
 
 fundraisingRouter.get("/elections/:electionId/donations", async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const status = c.req.query("status") || "completed";
-    const campaignId = c.req.query("campaignId");
-    const limit = parseInt(c.req.query("limit") || "50");
-    const offset = parseInt(c.req.query("offset") || "0");
+    const url = new URL(c.req.url);
+    const status = url.searchParams.get("status");
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? "50"), 200);
+    const offset = Number(url.searchParams.get("offset") ?? "0");
 
-    if (!tenantId) {
-      return c.json({ error: "Missing tenant ID" }, 400);
-    }
+    const sql = status
+      ? `SELECT * FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND status = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?`
+      : `SELECT * FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?`;
+    const stmt = status
+      ? c.env.DB.prepare(sql).bind(jwt.tenantId, electionId, status, limit, offset)
+      : c.env.DB.prepare(sql).bind(jwt.tenantId, electionId, limit, offset);
 
-    // Would query from D1 in production
-    const donations = [];
+    const res = await stmt.all();
+    const countSql = status
+      ? `SELECT COUNT(*) as total FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND status = ? AND deletedAt IS NULL`
+      : `SELECT COUNT(*) as total FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND deletedAt IS NULL`;
+    const countStmt = status
+      ? c.env.DB.prepare(countSql).bind(jwt.tenantId, electionId, status)
+      : c.env.DB.prepare(countSql).bind(jwt.tenantId, electionId);
+    const countRes = await countStmt.first<{ total: number }>();
 
-    logger.info("Donations listed", { electionId, status, campaignId, limit, offset });
-
-    return c.json({
-      success: true,
-      donations,
-      total: 0,
-      limit,
-      offset,
-    });
-  } catch (error) {
-    logger.error("Donation listing error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ success: true, data: { donations: res.results, total: countRes?.total ?? 0, limit, offset } });
+  } catch (err) {
+    logger.error("Failed to list donations", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 3: Get Donation Details ────────────────────────────────────────
+// ─── 3. Get Donation ──────────────────────────────────────────────────────────
 
-fundraisingRouter.get("/elections/:electionId/donations/:donationId", async (c) => {
+fundraisingRouter.get("/elections/:electionId/donations/:donId", async (c) => {
   try {
-    const electionId = c.req.param("electionId");
-    const donationId = c.req.param("donationId");
-    const tenantId = c.req.header("x-tenant-id");
-
-    if (!tenantId || !donationId) {
-      return c.json({ error: "Missing required fields" }, 400);
-    }
-
-    // Would query from D1 in production
-    const donation = {
-      id: donationId,
-      electionId,
-      donorName: "John Doe",
-      amount: 500000, // 5000 NGN in kobo
-      currency: "NGN",
-      status: "completed",
-      receiptUrl: generateReceiptUrl(donationId, tenantId),
-    };
-
-    logger.info("Donation details retrieved", { electionId, donationId });
-
-    return c.json({
-      success: true,
-      donation,
-    });
-  } catch (error) {
-    logger.error("Donation details retrieval error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    const jwt = getElectionJwt(c);
+    const donation = await c.env.DB
+      .prepare("SELECT * FROM civic_campaign_donations WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+      .bind(c.req.param("donId"), jwt.tenantId)
+      .first();
+    if (!donation) return c.json({ success: false, error: "Donation not found" }, 404);
+    return c.json({ success: true, data: donation });
+  } catch (err) {
+    logger.error("Failed to get donation", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 4: Refund Donation ────────────────────────────────────────────
+// ─── 4. Refund Donation ───────────────────────────────────────────────────────
 
-fundraisingRouter.post("/elections/:electionId/donations/:donationId/refund", async (c) => {
+fundraisingRouter.post("/elections/:electionId/donations/:donId/refund", requireAdminOrManager, async (c) => {
   try {
-    const electionId = c.req.param("electionId");
-    const donationId = c.req.param("donationId");
-    const tenantId = c.req.header("x-tenant-id");
-    const { refundReason } = await c.req.json();
-
-    if (!tenantId || !donationId) {
-      return c.json({ error: "Missing required fields" }, 400);
-    }
-
+    const jwt = getElectionJwt(c);
+    const donId = c.req.param("donId");
+    const body = await c.req.json<{ refundReason?: string }>().catch(() => ({}));
     const now = Date.now();
-
-    const refund = {
-      id: donationId,
-      status: "refunded",
-      refundedAt: now,
-      refundReason: refundReason || null,
-      updatedAt: now,
-    };
-
-    logger.info("Donation refunded", {
-      electionId,
-      donationId,
-      refundReason,
+    await c.env.DB
+      .prepare("UPDATE civic_campaign_donations SET status = 'refunded', updatedAt = ? WHERE id = ? AND tenantId = ?")
+      .bind(now, donId, jwt.tenantId)
+      .run();
+    await emitEvent(c.env, "campaign.donation.refunded", jwt.tenantId, {
+      donationId: donId, reason: body.refundReason,
     });
-
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "donation_refunded",
-      "donation",
-      donationId,
-      { refundReason }
-    );
-
-    return c.json({
-      success: true,
-      refund,
-    });
-  } catch (error) {
-    logger.error("Donation refund error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ success: true, data: { id: donId, status: "refunded" } });
+  } catch (err) {
+    logger.error("Failed to refund donation", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 5: Paystack Webhook Handler ───────────────────────────────────
+// ─── 5. Paystack Webhook (no auth — HMAC-SHA512 verified) ────────────────────
 
-fundraisingRouter.post("/elections/:electionId/donations/webhook/paystack", async (c) => {
+fundraisingRouter.post("/elections/:electionId/donations/webhook", async (c) => {
   try {
-    const electionId = c.req.param("electionId");
-    const signature = c.req.header("x-paystack-signature");
-    const body = await c.req.text();
+    const signature = c.req.header("x-paystack-signature") ?? "";
+    const rawBody = await c.req.text();
+    const secret = c.env.PAYSTACK_SECRET ?? "";
 
-    // Verify signature
-    const secret = c.env.PAYSTACK_SECRET || "";
-    if (!verifyPaystackSignature(body, signature || "", secret)) {
-      logger.warn("Paystack webhook signature verification failed", { electionId });
+    const valid = await verifyPaystackWebhook(rawBody, signature, secret);
+    if (!valid) {
+      logger.warn("Paystack webhook signature invalid");
       return c.json({ error: "Invalid signature" }, 401);
     }
 
-    const payload = JSON.parse(body);
+    const payload = JSON.parse(rawBody) as { event: string; data: { reference: string; amount: number } };
+    const electionId = c.req.param("electionId");
 
     if (payload.event === "charge.success") {
-      const { reference, amount, customer } = payload.data;
-
-      logger.info("Paystack charge success", {
-        electionId,
-        reference,
-        amount,
+      const now = Date.now();
+      await c.env.DB
+        .prepare("UPDATE civic_campaign_donations SET status = 'completed', updatedAt = ? WHERE paymentReference = ?")
+        .bind(now, payload.data.reference)
+        .run();
+      await emitEvent(c.env, "campaign.donation.completed", "", {
+        electionId, reference: payload.data.reference, amountKobo: payload.data.amount,
       });
-
-      // Update donation status to "completed"
-      await createAuditLogEntry(
-        c.env.DB,
-        electionId,
-        "system",
-        "donation_completed_via_paystack",
-        "donation",
-        reference,
-        { amount }
-      );
-
-      return c.json({ success: true });
-    }
-
-    if (payload.event === "charge.failed") {
-      const { reference } = payload.data;
-
-      logger.warn("Paystack charge failed", { electionId, reference });
-
-      // Update donation status to "failed"
-      await createAuditLogEntry(
-        c.env.DB,
-        electionId,
-        "system",
-        "donation_failed_via_paystack",
-        "donation",
-        reference
-      );
-
-      return c.json({ success: true });
+    } else if (payload.event === "charge.failed") {
+      const now = Date.now();
+      await c.env.DB
+        .prepare("UPDATE civic_campaign_donations SET status = 'failed', updatedAt = ? WHERE paymentReference = ?")
+        .bind(now, payload.data.reference)
+        .run();
     }
 
     return c.json({ success: true });
-  } catch (error) {
-    logger.error("Paystack webhook error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+  } catch (err) {
+    logger.error("Paystack webhook error", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 6: Create Expense ─────────────────────────────────────────────
+// ─── 6. Create Expense ────────────────────────────────────────────────────────
 
-fundraisingRouter.post("/elections/:electionId/expenses", async (c) => {
+fundraisingRouter.post("/elections/:electionId/expenses", requireAdminOrManager, async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const { category, description, amount, vendor, invoiceUrl, campaignId } = await c.req.json();
+    const body = await c.req.json<{
+      category: string;
+      description: string;
+      amountKobo: number;
+      currency?: string;
+      vendorName?: string;
+      receiptUrl?: string;
+      campaignId?: string;
+    }>();
 
-    if (!tenantId || !category || !description || !amount) {
-      return c.json(
-        { error: "Missing required fields: category, description, amount" },
-        400
-      );
+    if (!body.category || !body.description || !body.amountKobo || body.amountKobo <= 0) {
+      return c.json({ success: false, error: "category, description, amountKobo (positive) are required" }, 400);
     }
 
     const expenseId = uuidv4();
     const now = Date.now();
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_campaign_expenses (id, tenantId, electionId, campaignId, category,
+         description, amountKobo, currency, vendorName, receiptUrl, status, createdBy, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+      )
+      .bind(
+        expenseId, jwt.tenantId, electionId, body.campaignId ?? null,
+        body.category, body.description, body.amountKobo, body.currency ?? "NGN",
+        body.vendorName ?? null, body.receiptUrl ?? null, jwt.sub, now, now
+      )
+      .run();
 
-    const expense = {
-      id: expenseId,
-      electionId,
-      campaignId: campaignId || null,
-      tenantId,
-      category,
-      description,
-      amount,
-      currency: "NGN",
-      vendor: vendor || null,
-      invoiceUrl: invoiceUrl || null,
-      status: "pending",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    logger.info("Expense created", {
-      electionId,
-      expenseId,
-      category,
-      amount,
+    await emitEvent(c.env, "campaign.expense.created", jwt.tenantId, {
+      expenseId, electionId, amountKobo: body.amountKobo, category: body.category,
     });
 
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "expense_created",
-      "expense",
-      expenseId,
-      { category, amount, vendor }
-    );
-
-    return c.json({
-      success: true,
-      expense,
-    });
-  } catch (error) {
-    logger.error("Expense creation error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    logger.info("Campaign expense created", { expenseId, electionId, amountKobo: body.amountKobo });
+    return c.json({ success: true, data: { id: expenseId, status: "pending" } });
+  } catch (err) {
+    logger.error("Failed to create expense", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 7: List Expenses ──────────────────────────────────────────────
+// ─── 7. List Expenses ─────────────────────────────────────────────────────────
 
 fundraisingRouter.get("/elections/:electionId/expenses", async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const status = c.req.query("status");
-    const category = c.req.query("category");
-    const limit = parseInt(c.req.query("limit") || "50");
-    const offset = parseInt(c.req.query("offset") || "0");
+    const url = new URL(c.req.url);
+    const status = url.searchParams.get("status");
+    const category = url.searchParams.get("category");
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? "50"), 200);
+    const offset = Number(url.searchParams.get("offset") ?? "0");
 
-    if (!tenantId) {
-      return c.json({ error: "Missing tenant ID" }, 400);
-    }
+    let sql = "SELECT * FROM civic_campaign_expenses WHERE tenantId = ? AND electionId = ? AND deletedAt IS NULL";
+    const binds: (string | number)[] = [jwt.tenantId, electionId];
+    if (status) { sql += " AND status = ?"; binds.push(status); }
+    if (category) { sql += " AND category = ?"; binds.push(category); }
+    sql += " ORDER BY createdAt DESC LIMIT ? OFFSET ?";
+    binds.push(limit, offset);
 
-    // Would query from D1 in production
-    const expenses = [];
-
-    logger.info("Expenses listed", { electionId, status, category, limit, offset });
-
-    return c.json({
-      success: true,
-      expenses,
-      total: 0,
-      limit,
-      offset,
-    });
-  } catch (error) {
-    logger.error("Expense listing error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    const res = await c.env.DB.prepare(sql).bind(...binds).all();
+    return c.json({ success: true, data: { expenses: res.results, limit, offset } });
+  } catch (err) {
+    logger.error("Failed to list expenses", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 8: Approve Expense ────────────────────────────────────────────
+// ─── 8. Approve Expense ───────────────────────────────────────────────────────
 
-fundraisingRouter.patch("/elections/:electionId/expenses/:expenseId/approve", async (c) => {
+fundraisingRouter.patch("/elections/:electionId/expenses/:expId/approve", requireAdminOrManager, async (c) => {
   try {
-    const electionId = c.req.param("electionId");
-    const expenseId = c.req.param("expenseId");
-    const tenantId = c.req.header("x-tenant-id");
-    const { approvedBy } = await c.req.json();
-
-    if (!tenantId || !expenseId) {
-      return c.json({ error: "Missing required fields" }, 400);
-    }
-
+    const jwt = getElectionJwt(c);
+    const expId = c.req.param("expId");
     const now = Date.now();
+    await c.env.DB
+      .prepare("UPDATE civic_campaign_expenses SET status = 'approved', approvedBy = ?, updatedAt = ? WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+      .bind(jwt.sub, now, expId, jwt.tenantId)
+      .run();
 
-    const updated = {
-      id: expenseId,
-      status: "approved",
-      approvedBy: approvedBy || "system",
-      approvedAt: now,
-      updatedAt: now,
-    };
+    // Notify requester
+    const notifSvc = createNotificationService(c.env);
+    await notifSvc.requestNotification({
+      tenantId: jwt.tenantId,
+      organizationId: c.req.param("electionId"),
+      channel: "whatsapp",
+      templateId: CIVIC_NOTIFICATION_TEMPLATES.CAMPAIGN_EXPENSE_APPROVED,
+      data: { expenseId: expId },
+      priority: "normal",
+      idempotencyKey: `expense-approved:${expId}`,
+    }).catch(() => {});
 
-    logger.info("Expense approved", { electionId, expenseId, approvedBy });
-
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "expense_approved",
-      "expense",
-      expenseId,
-      { approvedBy }
-    );
-
-    return c.json({
-      success: true,
-      expense: updated,
-    });
-  } catch (error) {
-    logger.error("Expense approval error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    await emitEvent(c.env, "campaign.expense.approved", jwt.tenantId, { expenseId: expId, approvedBy: jwt.sub });
+    return c.json({ success: true, data: { id: expId, status: "approved", approvedBy: jwt.sub } });
+  } catch (err) {
+    logger.error("Failed to approve expense", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 9: Reject Expense ─────────────────────────────────────────────
+// ─── 9. Reject Expense ────────────────────────────────────────────────────────
 
-fundraisingRouter.patch("/elections/:electionId/expenses/:expenseId/reject", async (c) => {
+fundraisingRouter.patch("/elections/:electionId/expenses/:expId/reject", requireAdminOrManager, async (c) => {
   try {
-    const electionId = c.req.param("electionId");
-    const expenseId = c.req.param("expenseId");
-    const tenantId = c.req.header("x-tenant-id");
-    const { rejectionReason } = await c.req.json();
-
-    if (!tenantId || !expenseId) {
-      return c.json({ error: "Missing required fields" }, 400);
-    }
-
+    const jwt = getElectionJwt(c);
+    const expId = c.req.param("expId");
+    const body = await c.req.json<{ rejectionReason?: string }>().catch(() => ({}));
     const now = Date.now();
-
-    const updated = {
-      id: expenseId,
-      status: "rejected",
-      rejectionReason: rejectionReason || null,
-      updatedAt: now,
-    };
-
-    logger.info("Expense rejected", { electionId, expenseId, rejectionReason });
-
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "expense_rejected",
-      "expense",
-      expenseId,
-      { rejectionReason }
-    );
-
-    return c.json({
-      success: true,
-      expense: updated,
+    await c.env.DB
+      .prepare("UPDATE civic_campaign_expenses SET status = 'rejected', updatedAt = ? WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+      .bind(now, expId, jwt.tenantId)
+      .run();
+    await emitEvent(c.env, "campaign.expense.rejected", jwt.tenantId, {
+      expenseId: expId, rejectionReason: body.rejectionReason,
     });
-  } catch (error) {
-    logger.error("Expense rejection error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    return c.json({ success: true, data: { id: expId, status: "rejected" } });
+  } catch (err) {
+    logger.error("Failed to reject expense", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 10: Create Budget ─────────────────────────────────────────────
+// ─── 10. Create Budget ────────────────────────────────────────────────────────
 
-fundraisingRouter.post("/elections/:electionId/budget", async (c) => {
+fundraisingRouter.post("/elections/:electionId/budget", requireAdminOrManager, async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const { campaignId, totalBudget, category, startDate, endDate } = await c.req.json();
+    const body = await c.req.json<{
+      category: string;
+      budgetKobo: number;
+      campaignId?: string;
+      notes?: string;
+    }>();
 
-    if (!tenantId || !totalBudget) {
-      return c.json(
-        { error: "Missing required fields: totalBudget" },
-        400
-      );
+    if (!body.category || !body.budgetKobo || body.budgetKobo <= 0) {
+      return c.json({ success: false, error: "category and budgetKobo (positive) are required" }, 400);
     }
 
     const budgetId = uuidv4();
     const now = Date.now();
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_campaign_budgets (id, tenantId, electionId, campaignId, category,
+         budgetKobo, spentKobo, currency, notes, createdBy, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 'NGN', ?, ?, ?, ?)`
+      )
+      .bind(
+        budgetId, jwt.tenantId, electionId, body.campaignId ?? null,
+        body.category, body.budgetKobo, body.notes ?? null, jwt.sub, now, now
+      )
+      .run();
 
-    const budget = {
-      id: budgetId,
-      electionId,
-      campaignId: campaignId || null,
-      tenantId,
-      totalBudget,
-      currency: "NGN",
-      allocatedBudget: 0,
-      spentBudget: 0,
-      raisedFunds: 0,
-      category: category || "overall",
-      startDate: startDate || now,
-      endDate: endDate || null,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    logger.info("Budget created", {
-      electionId,
-      budgetId,
-      totalBudget,
-      category,
-    });
-
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "budget_created",
-      "budget",
-      budgetId,
-      { totalBudget, category }
-    );
-
-    return c.json({
-      success: true,
-      budget,
-    });
-  } catch (error) {
-    logger.error("Budget creation error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+    logger.info("Campaign budget created", { budgetId, electionId, budgetKobo: body.budgetKobo });
+    return c.json({ success: true, data: { id: budgetId, category: body.category, budgetKobo: body.budgetKobo } });
+  } catch (err) {
+    logger.error("Failed to create budget", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 11: Get Budget Status ─────────────────────────────────────────
+// ─── 11. Budget Status ────────────────────────────────────────────────────────
 
 fundraisingRouter.get("/elections/:electionId/budget", async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const campaignId = c.req.query("campaignId");
+    const campaignId = new URL(c.req.url).searchParams.get("campaignId");
 
-    if (!tenantId) {
-      return c.json({ error: "Missing tenant ID" }, 400);
-    }
+    const [donations, expenses, budgets] = await Promise.all([
+      (campaignId
+        ? c.env.DB.prepare("SELECT COALESCE(SUM(amountKobo),0) as total FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND campaignId = ? AND status = 'completed' AND deletedAt IS NULL").bind(jwt.tenantId, electionId, campaignId)
+        : c.env.DB.prepare("SELECT COALESCE(SUM(amountKobo),0) as total FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND status = 'completed' AND deletedAt IS NULL").bind(jwt.tenantId, electionId)
+      ).first<{ total: number }>(),
+      (campaignId
+        ? c.env.DB.prepare("SELECT COALESCE(SUM(amountKobo),0) as total FROM civic_campaign_expenses WHERE tenantId = ? AND electionId = ? AND campaignId = ? AND status = 'approved' AND deletedAt IS NULL").bind(jwt.tenantId, electionId, campaignId)
+        : c.env.DB.prepare("SELECT COALESCE(SUM(amountKobo),0) as total FROM civic_campaign_expenses WHERE tenantId = ? AND electionId = ? AND status = 'approved' AND deletedAt IS NULL").bind(jwt.tenantId, electionId)
+      ).first<{ total: number }>(),
+      (campaignId
+        ? c.env.DB.prepare("SELECT * FROM civic_campaign_budgets WHERE tenantId = ? AND electionId = ? AND campaignId = ? AND deletedAt IS NULL ORDER BY createdAt DESC").bind(jwt.tenantId, electionId, campaignId)
+        : c.env.DB.prepare("SELECT * FROM civic_campaign_budgets WHERE tenantId = ? AND electionId = ? AND deletedAt IS NULL ORDER BY createdAt DESC").bind(jwt.tenantId, electionId)
+      ).all(),
+    ]);
 
-    // Would query from D1 in production
-    const budget = {
-      id: uuidv4(),
-      campaignId,
-      electionId,
-      totalBudget: 10000000, // 100,000 NGN in kobo
-      raisedFunds: 5000000,
-      spentBudget: 3000000,
-      remainingBudget: 7000000,
-      spendPercentage: 30,
-      fundraisingPercentage: 50,
-    };
-
-    logger.info("Budget status retrieved", { electionId, campaignId });
+    const totalRaisedKobo = donations?.total ?? 0;
+    const totalSpentKobo = expenses?.total ?? 0;
+    const totalBudgetKobo = (budgets.results as { budgetKobo: number }[]).reduce((s, b) => s + b.budgetKobo, 0);
 
     return c.json({
       success: true,
-      budget,
+      data: {
+        electionId,
+        campaignId,
+        totalBudgetKobo,
+        totalRaisedKobo,
+        totalSpentKobo,
+        remainingBudgetKobo: Math.max(0, totalBudgetKobo - totalSpentKobo),
+        spentPercent: totalBudgetKobo > 0 ? Math.round((totalSpentKobo / totalBudgetKobo) * 10000) / 100 : 0,
+        fundraisingPercent: totalBudgetKobo > 0 ? Math.round((totalRaisedKobo / totalBudgetKobo) * 10000) / 100 : 0,
+        budgets: budgets.results,
+      },
     });
-  } catch (error) {
-    logger.error("Budget status retrieval error", { error });
-    return c.json({ error: "Internal server error" }, 500);
+  } catch (err) {
+    logger.error("Failed to get budget status", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 
-// ─── Endpoint 12: Compliance Report ─────────────────────────────────────────
+// ─── 12. Compliance Report ────────────────────────────────────────────────────
 
-fundraisingRouter.get("/elections/:electionId/fundraising/compliance-report", async (c) => {
+fundraisingRouter.get("/elections/:electionId/compliance-report", requireAdminOrManager, async (c) => {
   try {
+    const jwt = getElectionJwt(c);
     const electionId = c.req.param("electionId");
-    const tenantId = c.req.header("x-tenant-id");
-    const campaignId = c.req.query("campaignId");
-    const startDate = c.req.query("startDate");
-    const endDate = c.req.query("endDate");
+    const url = new URL(c.req.url);
+    const campaignId = url.searchParams.get("campaignId");
+    const startDate = url.searchParams.get("startDate");
+    const endDate = url.searchParams.get("endDate");
 
-    if (!tenantId) {
-      return c.json({ error: "Missing tenant ID" }, 400);
-    }
+    const startMs = startDate ? Number(startDate) : 0;
+    const endMs = endDate ? Number(endDate) : Date.now();
 
-    const now = Date.now();
+    const [donorsRes, expensesRes] = await Promise.all([
+      c.env.DB.prepare(
+        "SELECT COUNT(DISTINCT donorName) as count, COALESCE(SUM(amountKobo),0) as total FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND status = 'completed' AND createdAt BETWEEN ? AND ? AND deletedAt IS NULL"
+      ).bind(jwt.tenantId, electionId, startMs, endMs).first<{ count: number; total: number }>(),
+      c.env.DB.prepare(
+        "SELECT COUNT(*) as count, COALESCE(SUM(amountKobo),0) as total FROM civic_campaign_expenses WHERE tenantId = ? AND electionId = ? AND status = 'approved' AND createdAt BETWEEN ? AND ? AND deletedAt IS NULL"
+      ).bind(jwt.tenantId, electionId, startMs, endMs).first<{ count: number; total: number }>(),
+    ]);
 
-    const report = {
-      electionId,
-      campaignId,
-      generatedAt: now,
-      reportPeriod: {
-        startDate: startDate || null,
-        endDate: endDate || null,
-      },
-      summary: {
-        totalDonors: 0,
-        totalRaised: 0,
-        totalExpenses: 0,
-        remainingBudget: 0,
-      },
-      donors: [],
-      expenses: [],
-      compliance: {
-        ndprCompliant: true,
-        inecCompliant: true,
-        auditTrailComplete: true,
-      },
-    };
-
-    logger.info("Compliance report generated", {
-      electionId,
-      campaignId,
-      startDate,
-      endDate,
-    });
-
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "compliance_report_generated",
-      "report",
-      `report_${electionId}`,
-      { campaignId, startDate, endDate }
-    );
+    const ndprCheck = await c.env.DB
+      .prepare("SELECT COUNT(*) as total, SUM(CASE WHEN ndprConsent = 1 THEN 1 ELSE 0 END) as consented FROM civic_campaign_donations WHERE tenantId = ? AND electionId = ? AND deletedAt IS NULL")
+      .bind(jwt.tenantId, electionId)
+      .first<{ total: number; consented: number }>();
 
     return c.json({
       success: true,
-      report,
+      data: {
+        electionId,
+        campaignId,
+        generatedAt: Date.now(),
+        reportPeriod: { startMs, endMs },
+        summary: {
+          totalDonors: donorsRes?.count ?? 0,
+          totalRaisedKobo: donorsRes?.total ?? 0,
+          totalExpensesKobo: expensesRes?.total ?? 0,
+        },
+        compliance: {
+          ndprCompliant: (ndprCheck?.consented ?? 0) === (ndprCheck?.total ?? 0),
+          ndprConsentRate: ndprCheck && ndprCheck.total > 0
+            ? Math.round(((ndprCheck.consented ?? 0) / ndprCheck.total) * 10000) / 100
+            : 100,
+          inecCompliant: true,
+          auditTrailComplete: true,
+        },
+      },
     });
-  } catch (error) {
-    logger.error("Compliance report generation error", { error });
-    return c.json({ error: "Internal server error" }, 500);
-  }
-});
-
-// ─── Health Check ───────────────────────────────────────────────────────────
-
-fundraisingRouter.get("/elections/:electionId/fundraising/health", async (c) => {
-  try {
-    const electionId = c.req.param("electionId");
-
-    return c.json({
-      status: "healthy",
-      electionId,
-      timestamp: Date.now(),
-    });
-  } catch (error) {
-    logger.error("Health check error", { error });
-    return c.json({ status: "unhealthy", error: String(error) }, 500);
+  } catch (err) {
+    logger.error("Failed to generate compliance report", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 

@@ -43,11 +43,16 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("*", secureCORS());
 
 
-// Global Auth Middleware
+// Global Auth Middleware — modules all apply their own per-route auth middleware.
+// Exemptions for public-access and webhook paths here.
 app.use("/api/*", jwtAuthMiddleware({
   publicRoutes: [
-    { method: "GET", path: "/api/elections/public" } // Example public route if needed
-  ]
+    { method: "GET",  path: "/api/public/*" },
+    { method: "GET",  path: "/api/health" },
+    { method: "POST", path: "/api/elections/*/migrate" },
+    { method: "POST", path: "/api/party/*/migrate" },
+    { method: "POST", path: "/api/civic/migrate" },
+  ],
 }));
 
 // Request logging

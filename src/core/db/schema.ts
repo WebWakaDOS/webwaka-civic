@@ -1451,7 +1451,144 @@ export interface ElectionResultCollation {
 
 export const ELECTION_MIGRATION_SQL = `
 -- WebWaka Civic -- CIV-3 Elections D1 Migration
--- Phase 2: EL02 Multi-Level Result Collation
+-- Phase 2 + Phase 3: Volunteers, Campaign Finance, Result Collation
+
+-- civic_volunteers
+CREATE TABLE IF NOT EXISTS civic_volunteers (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  userId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  state TEXT,
+  lga TEXT,
+  ward TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  skills TEXT,
+  points INTEGER NOT NULL DEFAULT 0,
+  tasksCompleted INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_volunteers_tenant ON civic_volunteers(tenantId, electionId);
+CREATE INDEX IF NOT EXISTS idx_volunteers_user ON civic_volunteers(userId);
+
+-- civic_volunteer_tasks
+CREATE TABLE IF NOT EXISTS civic_volunteer_tasks (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  taskType TEXT NOT NULL DEFAULT 'general',
+  assignedTo TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  dueAt INTEGER,
+  pointsReward INTEGER NOT NULL DEFAULT 10,
+  createdBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_volunteer_tasks_tenant ON civic_volunteer_tasks(tenantId, electionId);
+CREATE INDEX IF NOT EXISTS idx_volunteer_tasks_assigned ON civic_volunteer_tasks(assignedTo);
+
+-- civic_volunteer_assignments
+CREATE TABLE IF NOT EXISTS civic_volunteer_assignments (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  taskId TEXT NOT NULL,
+  volunteerId TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  acceptedAt INTEGER,
+  completedAt INTEGER,
+  hoursWorked REAL,
+  notes TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_assignments_tenant ON civic_volunteer_assignments(tenantId, electionId);
+CREATE INDEX IF NOT EXISTS idx_assignments_volunteer ON civic_volunteer_assignments(volunteerId);
+
+-- civic_volunteer_badges
+CREATE TABLE IF NOT EXISTS civic_volunteer_badges (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  volunteerId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  badgeType TEXT NOT NULL,
+  awardedBy TEXT NOT NULL,
+  awardedAt INTEGER NOT NULL,
+  createdAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_badges_volunteer ON civic_volunteer_badges(volunteerId);
+
+-- civic_campaign_donations
+CREATE TABLE IF NOT EXISTS civic_campaign_donations (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  campaignId TEXT,
+  donorName TEXT NOT NULL,
+  donorEmail TEXT,
+  donorPhone TEXT,
+  amountKobo INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  paymentMethod TEXT NOT NULL DEFAULT 'paystack',
+  paymentReference TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  ndprConsent INTEGER NOT NULL DEFAULT 0,
+  receiptUrl TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_donations_tenant ON civic_campaign_donations(tenantId, electionId);
+CREATE INDEX IF NOT EXISTS idx_campaign_donations_status ON civic_campaign_donations(status);
+
+-- civic_campaign_expenses
+CREATE TABLE IF NOT EXISTS civic_campaign_expenses (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  campaignId TEXT,
+  category TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amountKobo INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  vendorName TEXT,
+  receiptUrl TEXT,
+  approvedBy TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  createdBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_expenses_tenant ON civic_campaign_expenses(tenantId, electionId);
+
+-- civic_campaign_budgets
+CREATE TABLE IF NOT EXISTS civic_campaign_budgets (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  campaignId TEXT,
+  category TEXT NOT NULL,
+  budgetKobo INTEGER NOT NULL,
+  spentKobo INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  notes TEXT,
+  createdBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_budgets_tenant ON civic_campaign_budgets(tenantId, electionId);
 
 -- election_result_collations
 CREATE TABLE IF NOT EXISTS election_result_collations (

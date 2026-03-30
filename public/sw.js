@@ -4,14 +4,64 @@
  *
  * Strategy:
  * - Shell: Cache-First (app shell, fonts, icons)
- * - API: Network-First with offline fallback
- * - Background Sync: queues mutations when offline
+ * - API GETs: Network-First with offline fallback
+ * - API mutations (POST/PATCH/DELETE): queued to IndexedDB when offline,
+ *   replayed on BackgroundSync tag "webwaka-civic-sync"
  */
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const SHELL_CACHE = `webwaka-civic-shell-${CACHE_VERSION}`;
-const DATA_CACHE = `webwaka-civic-data-${CACHE_VERSION}`;
-const SYNC_TAG = "webwaka-civic-sync";
+const DATA_CACHE  = `webwaka-civic-data-${CACHE_VERSION}`;
+const SYNC_TAG    = "webwaka-civic-sync";
+
+/** IndexedDB helpers — no library dependency */
+const IDB_NAME    = "webwaka-civic-sw";
+const IDB_VERSION = 1;
+const IDB_STORE   = "mutation-queue";
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: "id", autoIncrement: true });
+      }
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror   = (e) => reject(e.target.error);
+  });
+}
+
+async function idbAdd(entry) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(IDB_STORE, "readwrite");
+    const req = tx.objectStore(IDB_STORE).add(entry);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function idbGetAll() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(IDB_STORE, "readonly");
+    const req = tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function idbDelete(id) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction(IDB_STORE, "readwrite");
+    const req = tx.objectStore(IDB_STORE).delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror   = () => reject(req.error);
+  });
+}
 
 const SHELL_ASSETS = [
   "/",
@@ -54,18 +104,64 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET and cross-origin requests
-  if (request.method !== "GET" || url.origin !== self.location.origin) return;
+  // Skip cross-origin requests entirely
+  if (url.origin !== self.location.origin) return;
 
-  // API requests: Network-First
-  if (url.pathname.startsWith("/api/")) {
+  // API mutations — intercept and queue when offline
+  const isMutation = ["POST", "PATCH", "PUT", "DELETE"].includes(request.method);
+  if (url.pathname.startsWith("/api/") && isMutation) {
+    event.respondWith(networkOrQueue(request));
+    return;
+  }
+
+  // API GETs — Network-First with cache fallback
+  if (url.pathname.startsWith("/api/") && request.method === "GET") {
     event.respondWith(networkFirstWithCache(request));
     return;
   }
 
-  // Shell assets: Cache-First
+  // Shell assets — Cache-First
   event.respondWith(cacheFirstWithNetwork(request));
 });
+
+/** Attempt network; on failure serialize the request and queue it. */
+async function networkOrQueue(request) {
+  try {
+    const response = await fetch(request.clone());
+    return response;
+  } catch {
+    // Serialize request for later replay
+    const body = await request.clone().text().catch(() => "");
+    const headersObj = {};
+    request.headers.forEach((v, k) => { headersObj[k] = v; });
+
+    const entry = {
+      url:       request.url,
+      method:    request.method,
+      headers:   headersObj,
+      body:      body || null,
+      queuedAt:  Date.now(),
+    };
+
+    try {
+      await idbAdd(entry);
+      // Ask the browser to trigger background sync when connectivity returns
+      await self.registration.sync.register(SYNC_TAG).catch(() => {});
+      notifyClients({ type: "MUTATION_QUEUED", url: entry.url, method: entry.method });
+    } catch (err) {
+      // IDB unavailable — best effort
+      console.warn("[SW] Could not queue mutation:", err);
+    }
+
+    return new Response(
+      JSON.stringify({ success: false, offline: true, queued: true }),
+      {
+        status: 202,
+        headers: { "Content-Type": "application/json", "X-SW-Queued": "true" },
+      }
+    );
+  }
+}
 
 async function networkFirstWithCache(request) {
   try {
@@ -96,7 +192,6 @@ async function cacheFirstWithNetwork(request) {
     }
     return response;
   } catch {
-    // Return offline page for navigation requests
     if (request.mode === "navigate") {
       return caches.match("/offline.html");
     }
@@ -104,21 +199,96 @@ async function cacheFirstWithNetwork(request) {
   }
 }
 
-// ─── Background Sync ──────────────────────────────────────────────────────────
+// ─── Background Sync — Replay Queued Mutations ────────────────────────────────
 
 self.addEventListener("sync", (event) => {
   if (event.tag === SYNC_TAG) {
-    event.waitUntil(processOfflineMutations());
+    event.waitUntil(replayQueuedMutations());
   }
 });
 
-async function processOfflineMutations() {
-  // Notify all clients to trigger the Dexie sync engine
+async function replayQueuedMutations() {
+  let entries;
+  try {
+    entries = await idbGetAll();
+  } catch (err) {
+    console.warn("[SW] Cannot read mutation queue:", err);
+    return;
+  }
+
+  if (!entries || entries.length === 0) return;
+
+  const results = { replayed: 0, failed: 0, remaining: 0 };
+
+  for (const entry of entries) {
+    try {
+      const init = {
+        method:  entry.method,
+        headers: entry.headers,
+        body:    entry.body ?? undefined,
+      };
+      // Remove content-length to avoid mismatch on replay
+      delete init.headers["content-length"];
+
+      const response = await fetch(entry.url, init);
+
+      if (response.ok || (response.status >= 200 && response.status < 300)) {
+        await idbDelete(entry.id);
+        results.replayed++;
+      } else if (response.status >= 400 && response.status < 500) {
+        // 4xx — discard unrecoverable mutations (bad request, gone, etc.)
+        console.warn(`[SW] Discarding unrecoverable mutation ${entry.method} ${entry.url} (${response.status})`);
+        await idbDelete(entry.id);
+        results.failed++;
+      } else {
+        // 5xx or network error — leave in queue for next sync attempt
+        results.remaining++;
+      }
+    } catch {
+      // Network still unavailable — will retry on next sync
+      results.remaining++;
+    }
+  }
+
+  notifyClients({ type: "SYNC_COMPLETE", ...results });
+  console.info(`[SW] Background sync: replayed=${results.replayed} failed=${results.failed} remaining=${results.remaining}`);
+}
+
+// ─── Message passing ──────────────────────────────────────────────────────────
+
+async function notifyClients(message) {
   const clients = await self.clients.matchAll({ type: "window" });
   for (const client of clients) {
-    client.postMessage({ type: "SYNC_REQUESTED", tag: SYNC_TAG });
+    client.postMessage(message);
   }
 }
+
+// ─── Message handler (from app) ───────────────────────────────────────────────
+
+self.addEventListener("message", (event) => {
+  if (!event.data) return;
+
+  switch (event.data.type) {
+    case "SKIP_WAITING":
+      self.skipWaiting();
+      break;
+
+    case "GET_QUEUE_COUNT":
+      idbGetAll()
+        .then((entries) => {
+          event.source?.postMessage({
+            type: "QUEUE_COUNT",
+            count: entries.length,
+          });
+        })
+        .catch(() => {});
+      break;
+
+    case "FLUSH_QUEUE":
+      replayQueuedMutations().catch(console.warn);
+      break;
+  }
+});
 
 // ─── Push Notifications ───────────────────────────────────────────────────────
 
