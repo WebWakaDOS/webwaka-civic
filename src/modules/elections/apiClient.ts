@@ -256,3 +256,29 @@ export const fundraisingApi = {
   complianceReport: (electionId: string) =>
     electionFetch<unknown>(`/api/fundraising/elections/${electionId}/compliance-report`),
 };
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+export interface ElectionAnalytics {
+  electionId: string;
+  title: string;
+  status: string;
+  turnout: { eligibleVoters: number; votesCast: number; turnoutPercent: number };
+  results: Array<{ candidateId: string; name: string; voteCount: number; votePercent: number; rank: number }>;
+  winMargin: { winnerId: string; runnerUpId: string; marginVotes: number; marginPercent: number } | null;
+  geographic: Array<{ stationId: string; stationName: string; votesCast: number }>;
+}
+
+export interface ElectionComparison {
+  elections: Array<{ id: string; title: string; date: number }>;
+  candidateComparison: Array<{ name: string; votes: Record<string, number>; pct: Record<string, number>; swingPercent: number }>;
+  totalVotes: Record<string, number>;
+}
+
+export const analyticsApi = {
+  electionAnalytics: (electionId: string) =>
+    electionFetch<ElectionAnalytics>(`/api/elections/${electionId}/analytics`),
+
+  compareElections: (ids: string[]) =>
+    electionFetch<ElectionComparison>(`/api/public/elections/compare?ids=${ids.join(",")}`),
+};

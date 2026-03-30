@@ -63,7 +63,8 @@ type Page =
   | "nomination-detail"
   | "campaign-finance"
   | "finance-account-create"
-  | "finance-transactions";
+  | "finance-transactions"
+  | "analytics";
 
 interface DashboardStats {
   totalMembers: number;
@@ -1925,6 +1926,120 @@ function FinanceTransactionsPage({
   );
 }
 
+// ─── Phase 5: Hierarchy Analytics Page (P09) ──────────────────────────────────
+
+interface HierarchyNode {
+  structureId: string; name: string; level: string; parentId: string | null;
+  memberCount: number; activeMemberCount: number; duesCollectedKoboYTD: number; meetingCountLast90d: number;
+}
+
+function HierarchyAnalyticsPage({
+  api,
+  t,
+  dispatch,
+}: {
+  api: ReturnType<typeof createPartyApiClient>;
+  t: ReturnType<typeof getPartyTranslations>;
+  dispatch: React.Dispatch<Action>;
+}) {
+  const [node, setNode] = useState<HierarchyNode | null>(null);
+  const [children, setChildren] = useState<HierarchyNode[]>([]);
+  const [breadcrumb, setBreadcrumb] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadLevel = async (structureId?: string) => {
+    setLoading(true);
+    const res = await api.getHierarchyAnalytics(structureId);
+    if (res.success) {
+      setNode(res.data.node);
+      setChildren(res.data.children);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { void loadLevel(); }, []);
+
+  const drillDown = (child: HierarchyNode) => {
+    setBreadcrumb((prev) => [...prev, { id: child.structureId, name: child.name }]);
+    void loadLevel(child.structureId);
+  };
+
+  const goBack = () => {
+    const prev = [...breadcrumb];
+    prev.pop();
+    setBreadcrumb(prev);
+    const parentId = prev.length > 0 ? prev[prev.length - 1].id : undefined;
+    void loadLevel(parentId);
+  };
+
+  const maxDues = Math.max(...children.map((c) => c.duesCollectedKoboYTD), 1);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        {breadcrumb.length > 0 && (
+          <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={goBack}>←</button>
+        )}
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>📊 {t.nav.analytics}</div>
+      </div>
+
+      {breadcrumb.length > 0 && (
+        <div style={{ fontSize: "12px", color: "#6B7A8D", marginBottom: "12px" }}>
+          Root {breadcrumb.map((b) => ` › ${b.name}`)}
+        </div>
+      )}
+
+      {node && (
+        <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", marginBottom: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", border: "1px solid #E5EAF0" }}>
+          <div style={{ fontWeight: 700, fontSize: "16px" }}>{node.name}</div>
+          <div style={{ fontSize: "12px", color: "#6B7A8D", marginBottom: "12px" }}>Level: {node.level}</div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            {[
+              { label: "Members", value: node.memberCount },
+              { label: "Active", value: node.activeMemberCount },
+              { label: "Meetings (90d)", value: node.meetingCountLast90d },
+            ].map((s) => (
+              <div key={s.label} style={{ flex: 1, backgroundColor: "#F4F7FA", borderRadius: "8px", padding: "10px", textAlign: "center" }}>
+                <div style={{ fontSize: "20px", fontWeight: 700, color: "#1A6B3C" }}>{s.value}</div>
+                <div style={{ fontSize: "10px", color: "#6B7A8D" }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: "10px", fontSize: "12px", color: "#6B7A8D" }}>Dues YTD: <strong>₦{(node.duesCollectedKoboYTD / 100).toLocaleString()}</strong></div>
+        </div>
+      )}
+
+      {loading ? (
+        <LoadingSpinner />
+      ) : children.length === 0 ? (
+        <div style={{ color: "#6B7A8D", textAlign: "center", padding: "24px" }}>No sub-structures found</div>
+      ) : (
+        <>
+          <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "8px" }}>Sub-structures</div>
+          {children.map((c) => (
+            <div key={c.structureId} style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "14px 16px", marginBottom: "10px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)", cursor: "pointer", border: "1px solid #E5EAF0" }}
+              onClick={() => drillDown(c)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{c.name}</div>
+                  <div style={{ fontSize: "11px", color: "#6B7A8D" }}>{c.level} · {c.memberCount} members</div>
+                </div>
+                <div style={{ textAlign: "right", fontSize: "12px" }}>
+                  <div style={{ fontWeight: 600, color: "#1A6B3C" }}>₦{(c.duesCollectedKoboYTD / 100).toLocaleString()}</div>
+                  <div style={{ color: "#6B7A8D" }}>{c.meetingCountLast90d} meetings</div>
+                </div>
+              </div>
+              <div style={{ marginTop: "8px", height: "5px", borderRadius: "3px", backgroundColor: "#E5EAF0" }}>
+                <div style={{ height: "100%", width: `${(c.duesCollectedKoboYTD / maxDues) * 100}%`, backgroundColor: "#1A6B3C", borderRadius: "3px" }} />
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 interface PartyAppProps {
@@ -2205,6 +2320,7 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
     { page: "structure" as Page, icon: "🗺️", label: t.nav.structure },
     { page: "meetings" as Page, icon: "📅", label: t.nav.meetings },
     { page: "id-cards" as Page, icon: "🪪", label: t.nav.idCards },
+    { page: "analytics" as Page, icon: "📊", label: t.nav.analytics },
   ];
 
   const activePage = navItems.find((n) => state.page.startsWith(n.page))?.page ?? "dashboard";
@@ -2362,6 +2478,9 @@ export function PartyApp({ apiBaseUrl, token, organizationId }: PartyAppProps) {
             onBack={() => dispatch({ type: "SET_PAGE", page: "campaign-finance" })}
           />
         );
+
+      case "analytics":
+        return <HierarchyAnalyticsPage api={api} t={t} dispatch={dispatch} />;
 
       default:
         return <DashboardPage state={state} dispatch={dispatch} t={t} />;

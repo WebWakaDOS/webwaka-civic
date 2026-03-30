@@ -383,6 +383,14 @@ export class PartyApiClient {
   async migrate(): Promise<ApiResponse<{ applied: number; message: string }>> {
     return this.request("POST", "/api/party/migrate", {});
   }
+
+  async getHierarchyAnalytics(structureId?: string): Promise<ApiResponse<{
+    node: { structureId: string; name: string; level: string; memberCount: number; activeMemberCount: number; duesCollectedKoboYTD: number; meetingCountLast90d: number } | null;
+    children: Array<{ structureId: string; name: string; level: string; parentId: string | null; memberCount: number; activeMemberCount: number; duesCollectedKoboYTD: number; meetingCountLast90d: number }>;
+  }>> {
+    const qs = structureId ? `?structureId=${encodeURIComponent(structureId)}` : "";
+    return this.request("GET", `/api/party/analytics/hierarchy${qs}`);
+  }
 }
 
 /**

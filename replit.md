@@ -225,6 +225,50 @@ Provides reusable JWT verification and role-guard middleware for CIV-3 (Election
 - **admin + campaign_manager + volunteer**: update task status
 - **authenticated (any)**: all reads, verify vote, sync pull
 
+## Phase 5 — Analytics, Compliance & Governance — COMPLETED (Weeks 27–32)
+
+### T001: Schema Extensions
+- `CivicProject` table: multi-fund project accounting (id, tenantId, organizationId, name, donorName, budgetKobo, startDate, endDate, status, description)
+- `CivicNdprAuditLog` table: NDPR compliance log (id, tenantId, memberId, action, consentVersion, requestType, notes, performedBy, createdAt)
+- `isDonor`, `donorSince`, `donorNotes` fields added to `CivicMember`
+- `projectId` optional FK added to `CivicDonation` and `CivicExpense`
+- All tables appended to `MIGRATION_SQL` constant in `src/core/db/schema.ts`
+
+### T002: Church/NGO Analytics & Compliance APIs
+- `GET /api/civic/analytics/donations` (E07): 12-month monthly trend, department breakdown, top-givers tiers, YoY comparison
+- `GET /api/civic/analytics/pledges` (F07): totalPledged, totalPaid, fulfillmentPercent, aging buckets, top-5 unfulfilled
+- `GET/POST /api/civic/projects` + `GET /api/civic/projects/:id/summary` (E06): project accounting
+- `GET /api/civic/donors` + `PATCH /api/civic/members/:id/donor-profile` (F06): donor CRM
+- `POST /api/civic/members/:id/consent-withdraw` + `GET /api/civic/ndpr/audit-log` + `POST /api/civic/members/:id/data-erasure-request` (E08): NDPR
+
+### T003: Party Hierarchy Analytics API
+- `GET /api/party/analytics/hierarchy?structureId=...` (P09): node + direct children with memberCount, activeMemberCount, duesCollectedKoboYTD, meetingCountLast90d
+
+### T004: Election Analytics & Comparison APIs
+- `GET /api/elections/:id/analytics` (EL12): turnout, ranked results, winMargin, geographic breakdown
+- `GET /api/public/elections/compare?ids=...` (CE10): public endpoint, candidate comparison + swing % across 2 elections
+
+### T005/T006: Church/NGO Frontend (Analytics Dashboard + Member Portal)
+- New pages: AnalyticsPage (12-month bar chart, pledge aging, department breakdown), DonorsPage, DonorDetailPage, ProjectsPage, ProjectCreatePage
+- Member self-service portal: MemberPortal, PortalGivingPage, PortalPledgesPage, PortalEventsPage, PortalProfilePage
+- Extended apiClient: getDonationAnalytics, getPledgeAnalytics, getDonors, updateDonorProfile, getProjects, createProject, getProjectSummary
+- Added 📊 Analytics tab to bottom nav (i18n: en/yo/ig/ha)
+
+### T007: Party Hierarchy Analytics Frontend
+- `HierarchyAnalyticsPage`: drill-down structure cards with breadcrumb trail, memberCount, dues bar chart
+- Added 📊 Analytics nav item to political-party bottom nav
+- `getHierarchyAnalytics(structureId?)` added to party apiClient
+- `analytics` key added to all 4 party locales (en/yo/ig/ha)
+
+### T008: Election Post-Analytics Frontend
+- `ElectionAnalyticsPage`: turnout gauge, ranked results bars, win margin callout, geographic breakdown table
+- `CompareElectionsPage`: select 2 elections, side-by-side candidate bars with swing % arrows
+- 📈 Analytics button on ElectionDetailPage
+- `analyticsApi` (electionAnalytics, compareElections) added to elections apiClient
+
+### Build Status
+- **0 TypeScript errors**, **0 Vite errors**, **447 KB bundle**
+
 ## Key Features
 - Mobile-first, offline-first PWA
 - Multi-tenancy (every record includes `tenantId`)

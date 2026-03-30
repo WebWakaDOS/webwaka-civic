@@ -53,7 +53,17 @@ type Page =
   | "event-create"
   | "event-attendance"
   | "grants"
-  | "grant-create";
+  | "grant-create"
+  | "analytics"
+  | "donors"
+  | "donor-detail"
+  | "projects"
+  | "project-create"
+  | "member-portal"
+  | "portal-giving"
+  | "portal-pledges"
+  | "portal-events"
+  | "portal-profile";
 
 interface AppState {
   page: Page;
@@ -1310,6 +1320,567 @@ function GrantsPage({
   );
 }
 
+// ─── Phase 5: Analytics & Donor CRM Pages ────────────────────────────────────
+
+interface DonationAnalytics {
+  monthlyTrend: Array<{ month: string; totalKobo: number; count: number }>;
+  departmentBreakdown: Array<{ departmentId: string; name: string; totalKobo: number }>;
+  topGiversTiers: { major: number; regular: number; lapsed: number };
+  yoyComparison: { thisYearKobo: number; lastYearKobo: number; percentChange: number | null };
+}
+
+interface PledgeAnalytics {
+  totalPledgedKobo: number;
+  totalPaidKobo: number;
+  fulfillmentPercent: number;
+  aging: {
+    bucket30d: { count: number; kobo: number };
+    bucket60d: { count: number; kobo: number };
+    bucket90dPlus: { count: number; kobo: number };
+  };
+  topUnfulfilled: Array<{ pledgeId: string; memberId: string; totalAmountKobo: number; paidAmountKobo: number; remainingKobo: number; dueDate: number | null }>;
+}
+
+interface DonorProfile {
+  id: string; firstName: string; lastName: string; phone: string | null; email: string | null;
+  isDonor: number; donorSince: number | null; donorNotes: string | null;
+  totalGivenKobo: number; lastGiftDate: number | null; giftCount: number; ytdKobo: number;
+  donorTier: "major" | "regular" | "lapsed";
+}
+
+interface CivicProjectItem {
+  id: string; name: string; donorName: string | null; budgetKobo: number; status: string;
+  startDate: number | null; endDate: number | null; description: string | null;
+}
+
+function AnalyticsPage({ dispatch }: { dispatch: React.Dispatch<Action> }) {
+  const [donAna, setDonAna] = useState<DonationAnalytics | null>(null);
+  const [pledAna, setPledAna] = useState<PledgeAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      apiGet<DonationAnalytics>("/analytics/donations"),
+      apiGet<PledgeAnalytics>("/analytics/pledges"),
+    ]).then(([d, p]) => {
+      if (d.success && d.data) setDonAna(d.data);
+      if (p.success && p.data) setPledAna(p.data);
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return <LoadingSpinner />;
+
+  const maxKobo = donAna ? Math.max(...donAna.monthlyTrend.map((m) => m.totalKobo), 1) : 1;
+
+  return (
+    <div>
+      <div style={{ fontSize: "20px", fontWeight: 700, marginBottom: "16px" }}>📊 Analytics</div>
+
+      {donAna && (
+        <>
+          <div style={{ fontSize: "16px", fontWeight: 700, marginBottom: "12px" }}>Tithe & Offering Trends (12 months)</div>
+          <div style={{ backgroundColor: colors.surface, borderRadius: "12px", padding: "16px", marginBottom: "16px", border: `1px solid ${colors.border}` }}>
+            {donAna.monthlyTrend.map((m) => (
+              <div key={m.month} style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <div style={{ width: "42px", fontSize: "10px", color: colors.textMuted, flexShrink: 0 }}>{m.month.slice(5)}</div>
+                <div style={{ flex: 1, height: "18px", borderRadius: "4px", backgroundColor: colors.border, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${(m.totalKobo / maxKobo) * 100}%`, backgroundColor: colors.primary, borderRadius: "4px" }} />
+                </div>
+                <div style={{ width: "70px", fontSize: "10px", textAlign: "right" as const, color: colors.text }}>{koboToNaira(m.totalKobo)}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
+            <div style={{ ...s.statCard }}>
+              <div style={{ fontSize: "11px", color: colors.textMuted }}>This Year</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: colors.success }}>{koboToNaira(donAna.yoyComparison.thisYearKobo)}</div>
+            </div>
+            <div style={{ ...s.statCard }}>
+              <div style={{ fontSize: "11px", color: colors.textMuted }}>YoY Change</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: (donAna.yoyComparison.percentChange ?? 0) >= 0 ? colors.success : colors.error }}>
+                {donAna.yoyComparison.percentChange !== null ? `${donAna.yoyComparison.percentChange > 0 ? "+" : ""}${donAna.yoyComparison.percentChange}%` : "N/A"}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ fontSize: "16px", fontWeight: 700, marginBottom: "12px" }}>Giving Tiers (YTD)</div>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+            {[
+              { label: "Major (≥₦5k)", count: donAna.topGiversTiers.major, color: colors.primary },
+              { label: "Regular", count: donAna.topGiversTiers.regular, color: colors.success },
+              { label: "Lapsed", count: donAna.topGiversTiers.lapsed, color: colors.textMuted },
+            ].map((tier) => (
+              <div key={tier.label} style={{ flex: 1, backgroundColor: colors.surface, borderRadius: "10px", padding: "10px", border: `1px solid ${colors.border}`, textAlign: "center" as const }}>
+                <div style={{ fontSize: "20px", fontWeight: 700, color: tier.color }}>{tier.count}</div>
+                <div style={{ fontSize: "10px", color: colors.textMuted }}>{tier.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: "16px", fontWeight: 700, marginBottom: "12px" }}>Department Giving</div>
+          <div style={{ backgroundColor: colors.surface, borderRadius: "12px", padding: "16px", marginBottom: "16px", border: `1px solid ${colors.border}` }}>
+            {donAna.departmentBreakdown.length === 0 && <div style={{ color: colors.textMuted, fontSize: "13px" }}>No department data</div>}
+            {donAna.departmentBreakdown.map((d) => {
+              const maxD = Math.max(...donAna.departmentBreakdown.map((x) => x.totalKobo), 1);
+              return (
+                <div key={d.departmentId} style={{ marginBottom: "8px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "3px" }}>
+                    <span>{d.name}</span><span style={{ color: colors.primary }}>{koboToNaira(d.totalKobo)}</span>
+                  </div>
+                  <div style={{ height: "6px", borderRadius: "3px", backgroundColor: colors.border }}>
+                    <div style={{ height: "100%", width: `${(d.totalKobo / maxD) * 100}%`, backgroundColor: colors.primary, borderRadius: "3px" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {pledAna && (
+        <>
+          <div style={{ fontSize: "16px", fontWeight: 700, marginBottom: "12px" }}>Pledge Reconciliation</div>
+          <div style={{ backgroundColor: colors.surface, borderRadius: "12px", padding: "16px", marginBottom: "16px", border: `1px solid ${colors.border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+              <span style={{ fontSize: "13px" }}>Total Pledged</span>
+              <span style={{ fontWeight: 700 }}>{koboToNaira(pledAna.totalPledgedKobo)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+              <span style={{ fontSize: "13px" }}>Total Paid</span>
+              <span style={{ fontWeight: 700, color: colors.success }}>{koboToNaira(pledAna.totalPaidKobo)}</span>
+            </div>
+            <div style={{ height: "8px", borderRadius: "4px", backgroundColor: colors.border, marginBottom: "4px" }}>
+              <div style={{ height: "100%", width: `${pledAna.fulfillmentPercent}%`, backgroundColor: colors.success, borderRadius: "4px" }} />
+            </div>
+            <div style={{ fontSize: "12px", color: colors.textMuted }}>{pledAna.fulfillmentPercent}% fulfilled</div>
+          </div>
+
+          <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "8px" }}>Overdue Buckets</div>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+            {[
+              { label: "0–30 days", ...pledAna.aging.bucket30d },
+              { label: "30–60 days", ...pledAna.aging.bucket60d },
+              { label: "90+ days", ...pledAna.aging.bucket90dPlus },
+            ].map((b) => (
+              <div key={b.label} style={{ flex: 1, backgroundColor: colors.surface, borderRadius: "10px", padding: "10px", border: `1px solid ${colors.border}` }}>
+                <div style={{ fontSize: "16px", fontWeight: 700, color: colors.error }}>{b.count}</div>
+                <div style={{ fontSize: "9px", color: colors.textMuted }}>{b.label}</div>
+                <div style={{ fontSize: "10px", color: colors.textMuted }}>{koboToNaira(b.kobo)}</div>
+              </div>
+            ))}
+          </div>
+
+          {pledAna.topUnfulfilled.length > 0 && (
+            <>
+              <div style={{ fontSize: "14px", fontWeight: 600, marginBottom: "8px" }}>Top Unfulfilled Pledges</div>
+              {pledAna.topUnfulfilled.map((p) => (
+                <div key={p.pledgeId} style={{ ...s.card, display: "flex", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", color: colors.textMuted }}>Member: {p.memberId.slice(0, 8)}…</div>
+                    <div style={{ fontSize: "13px", fontWeight: 600, color: colors.error }}>Outstanding: {koboToNaira(p.remainingKobo)}</div>
+                  </div>
+                  <div style={{ fontSize: "11px", color: colors.textMuted }}>{p.dueDate ? new Date(p.dueDate).toLocaleDateString("en-NG") : "No due"}</div>
+                </div>
+              ))}
+            </>
+          )}
+        </>
+      )}
+
+      <button style={{ ...s.btn, backgroundColor: colors.primary, color: "#fff", padding: "12px 20px", borderRadius: "10px", border: "none", cursor: "pointer", width: "100%", marginTop: "8px" }}
+        onClick={() => dispatch({ type: "SET_PAGE", page: "donors" })}>
+        👥 View Donor CRM
+      </button>
+      <button style={{ ...s.btn, backgroundColor: colors.success, color: "#fff", padding: "12px 20px", borderRadius: "10px", border: "none", cursor: "pointer", width: "100%", marginTop: "8px" }}
+        onClick={() => dispatch({ type: "SET_PAGE", page: "projects" })}>
+        📁 View Projects
+      </button>
+    </div>
+  );
+}
+
+function DonorsPage({ dispatch }: { dispatch: React.Dispatch<Action> }) {
+  const [donors, setDonors] = useState<DonorProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    apiGet<{ donors: DonorProfile[] }>("/donors").then((r) => {
+      if (r.success && r.data) setDonors(r.data.donors);
+      setLoading(false);
+    });
+  }, []);
+
+  const tierColor = (t: string) => t === "major" ? colors.primary : t === "regular" ? colors.success : colors.textMuted;
+  const filtered = donors.filter((d) => `${d.firstName} ${d.lastName}`.toLowerCase().includes(search.toLowerCase()));
+
+  if (loading) return <LoadingSpinner />;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>Donor CRM</div>
+      </div>
+      <input
+        style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${colors.border}`, marginBottom: "12px", fontSize: "14px", boxSizing: "border-box" as const }}
+        placeholder="Search donors..." value={search} onChange={(e) => setSearch(e.target.value)}
+      />
+      {filtered.length === 0 && <div style={{ color: colors.textMuted }}>No donors found</div>}
+      {filtered.map((d) => (
+        <div key={d.id} style={{ ...s.card, cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "donor-detail", selectedId: d.id })}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontWeight: 600 }}>{d.firstName} {d.lastName}</div>
+              <div style={{ fontSize: "12px", color: colors.textMuted }}>{d.phone ?? d.email ?? "—"}</div>
+              <div style={{ fontSize: "12px", marginTop: "4px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, color: tierColor(d.donorTier), backgroundColor: `${tierColor(d.donorTier)}22`, padding: "2px 7px", borderRadius: "10px" }}>{d.donorTier.toUpperCase()}</span>
+              </div>
+            </div>
+            <div style={{ textAlign: "right" as const }}>
+              <div style={{ fontWeight: 700, color: colors.primary }}>{koboToNaira(d.totalGivenKobo)}</div>
+              <div style={{ fontSize: "11px", color: colors.textMuted }}>{d.giftCount} gifts</div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DonorDetailPage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const [donor, setDonor] = useState<DonorProfile | null>(null);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!state.selectedId) return;
+    apiGet<{ donors: DonorProfile[] }>("/donors").then((r) => {
+      if (r.success && r.data) {
+        const d = r.data.donors.find((x) => x.id === state.selectedId) ?? null;
+        setDonor(d);
+        setNotes(d?.donorNotes ?? "");
+      }
+    });
+  }, [state.selectedId]);
+
+  const handleSave = async () => {
+    if (!donor) return;
+    setSaving(true);
+    await apiPatch(`/members/${donor.id}/donor-profile`, { isDonor: true, donorNotes: notes });
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  if (!donor) return <LoadingSpinner />;
+
+  const tierColor = (t: string) => t === "major" ? colors.primary : t === "regular" ? colors.success : colors.textMuted;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "donors" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>Donor Profile</div>
+      </div>
+      <div style={s.card}>
+        <div style={{ fontWeight: 700, fontSize: "18px" }}>{donor.firstName} {donor.lastName}</div>
+        <span style={{ fontSize: "11px", fontWeight: 700, color: tierColor(donor.donorTier), backgroundColor: `${tierColor(donor.donorTier)}22`, padding: "2px 8px", borderRadius: "10px" }}>{donor.donorTier.toUpperCase()}</span>
+        <div style={{ display: "flex", gap: "12px", marginTop: "12px" }}>
+          <div style={s.statCard}><div style={{ fontSize: "11px", color: colors.textMuted }}>Total Given</div><div style={{ fontWeight: 700, color: colors.primary }}>{koboToNaira(donor.totalGivenKobo)}</div></div>
+          <div style={s.statCard}><div style={{ fontSize: "11px", color: colors.textMuted }}>YTD</div><div style={{ fontWeight: 700, color: colors.success }}>{koboToNaira(donor.ytdKobo)}</div></div>
+        </div>
+        <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+          <div style={s.statCard}><div style={{ fontSize: "11px", color: colors.textMuted }}>Gifts</div><div style={{ fontWeight: 700 }}>{donor.giftCount}</div></div>
+          <div style={s.statCard}><div style={{ fontSize: "11px", color: colors.textMuted }}>Last Gift</div><div style={{ fontWeight: 700, fontSize: "12px" }}>{donor.lastGiftDate ? new Date(donor.lastGiftDate).toLocaleDateString("en-NG") : "—"}</div></div>
+        </div>
+      </div>
+      <div style={s.card}>
+        <div style={{ fontWeight: 600, marginBottom: "8px" }}>Donor Notes</div>
+        <textarea
+          style={{ width: "100%", minHeight: "80px", padding: "8px", borderRadius: "8px", border: `1px solid ${colors.border}`, fontSize: "13px", resize: "vertical" as const, boxSizing: "border-box" as const }}
+          value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Add notes about this donor..."
+        />
+        {saved && <div style={{ color: colors.success, fontSize: "12px", marginTop: "4px" }}>✓ Saved</div>}
+        <button
+          style={{ marginTop: "8px", padding: "10px 20px", backgroundColor: colors.primary, color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, opacity: saving ? 0.6 : 1 }}
+          onClick={handleSave} disabled={saving}
+        >
+          {saving ? "Saving…" : "Save Notes"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProjectsPage({ dispatch }: { dispatch: React.Dispatch<Action> }) {
+  const [projects, setProjects] = useState<CivicProjectItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiGet<{ projects: CivicProjectItem[] }>("/projects").then((r) => {
+      if (r.success && r.data) setProjects(r.data.projects);
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return <LoadingSpinner />;
+
+  const statusColor = (s: string) => s === "active" ? colors.success : s === "closed" ? colors.textMuted : colors.warning ?? colors.primary;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>←</button>
+          <div style={{ fontSize: "20px", fontWeight: 700 }}>Projects</div>
+        </div>
+        <button style={{ padding: "8px 14px", backgroundColor: colors.primary, color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600 }}
+          onClick={() => dispatch({ type: "SET_PAGE", page: "project-create" })}>+ New</button>
+      </div>
+      {projects.length === 0 && <div style={{ color: colors.textMuted }}>No projects yet</div>}
+      {projects.map((p) => (
+        <div key={p.id} style={s.card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ fontWeight: 600 }}>{p.name}</div>
+            <span style={{ fontSize: "11px", fontWeight: 600, color: statusColor(p.status), backgroundColor: `${statusColor(p.status)}22`, padding: "2px 8px", borderRadius: "10px" }}>{p.status}</span>
+          </div>
+          {p.donorName && <div style={{ fontSize: "12px", color: colors.textMuted, marginTop: "4px" }}>Donor: {p.donorName}</div>}
+          <div style={{ marginTop: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "4px" }}>
+              <span>Budget: {koboToNaira(p.budgetKobo)}</span>
+            </div>
+            <div style={{ height: "6px", borderRadius: "3px", backgroundColor: colors.border }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProjectCreatePage({ dispatch }: { dispatch: React.Dispatch<Action> }) {
+  const [form, setForm] = useState({ name: "", donorName: "", budgetKobo: "", description: "", status: "draft" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { setError("Project name is required"); return; }
+    setSaving(true);
+    const res = await apiPost<{ projectId: string }>("/projects", {
+      name: form.name,
+      donorName: form.donorName || undefined,
+      budgetKobo: form.budgetKobo ? Math.round(parseFloat(form.budgetKobo) * 100) : 0,
+      description: form.description || undefined,
+      status: form.status,
+    });
+    setSaving(false);
+    if (res.success) dispatch({ type: "SET_PAGE", page: "projects" });
+    else setError(res.error ?? "Failed to create project");
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "projects" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>New Project</div>
+      </div>
+      {error && <div style={{ padding: "10px", backgroundColor: "#FEE2E2", color: colors.error, borderRadius: "8px", marginBottom: "12px" }}>{error}</div>}
+      {[
+        { label: "Project Name *", key: "name", type: "text" },
+        { label: "Donor Name", key: "donorName", type: "text" },
+        { label: "Budget (₦)", key: "budgetKobo", type: "number" },
+        { label: "Description", key: "description", type: "text" },
+      ].map(({ label, key, type }) => (
+        <div key={key} style={{ marginBottom: "12px" }}>
+          <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>{label}</label>
+          <input type={type} style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${colors.border}`, fontSize: "14px", boxSizing: "border-box" as const }}
+            value={form[key as keyof typeof form]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
+        </div>
+      ))}
+      <div style={{ marginBottom: "12px" }}>
+        <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>Status</label>
+        <select style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${colors.border}`, fontSize: "14px" }}
+          value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+          <option value="draft">Draft</option>
+          <option value="active">Active</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+      <button style={{ width: "100%", padding: "14px", backgroundColor: colors.primary, color: "#fff", border: "none", borderRadius: "10px", cursor: "pointer", fontWeight: 700, opacity: saving ? 0.6 : 1 }}
+        onClick={handleSave} disabled={saving}>
+        {saving ? "Creating…" : "Create Project"}
+      </button>
+    </div>
+  );
+}
+
+// ─── Member Self-Service Portal (E05) ─────────────────────────────────────────
+
+function MemberPortal({ dispatch }: { dispatch: React.Dispatch<Action> }) {
+  return (
+    <div>
+      <div style={{ textAlign: "center" as const, padding: "24px 0 16px" }}>
+        <div style={{ fontSize: "40px" }}>👤</div>
+        <div style={{ fontSize: "20px", fontWeight: 700, marginTop: "8px" }}>My Portal</div>
+        <div style={{ fontSize: "13px", color: colors.textMuted }}>Member Self-Service</div>
+      </div>
+      {[
+        { page: "portal-giving" as Page, icon: "🙏", label: "My Giving", desc: "Donations & YTD total" },
+        { page: "portal-pledges" as Page, icon: "🤝", label: "My Pledges", desc: "Active pledges & payments" },
+        { page: "portal-events" as Page, icon: "📅", label: "My Events", desc: "Upcoming events" },
+        { page: "portal-profile" as Page, icon: "✏️", label: "My Profile", desc: "View & update your info" },
+      ].map((item) => (
+        <div key={item.page} style={{ ...s.card, cursor: "pointer", display: "flex", alignItems: "center", gap: "14px" }}
+          onClick={() => dispatch({ type: "SET_PAGE", page: item.page })}>
+          <div style={{ fontSize: "28px" }}>{item.icon}</div>
+          <div>
+            <div style={{ fontWeight: 600 }}>{item.label}</div>
+            <div style={{ fontSize: "12px", color: colors.textMuted }}>{item.desc}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PortalGivingPage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const donations = state.donations;
+  const ytd = donations.filter((d) => d.donationDate >= new Date(new Date().getFullYear(), 0, 1).getTime()).reduce((s, d) => s + d.amountKobo, 0);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "member-portal" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>My Giving</div>
+      </div>
+      <div style={{ ...s.statCard, marginBottom: "16px", backgroundColor: colors.primary + "15" }}>
+        <div style={{ fontSize: "12px", color: colors.textMuted }}>Year-to-Date Total</div>
+        <div style={{ fontSize: "26px", fontWeight: 700, color: colors.primary }}>{koboToNaira(ytd)}</div>
+      </div>
+      {donations.length === 0 && <div style={{ color: colors.textMuted }}>No donations recorded</div>}
+      {donations.map((d) => (
+        <div key={d.id} style={s.card}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontWeight: 600 }}>{d.donationType}</div>
+              <div style={{ fontSize: "12px", color: colors.textMuted }}>{new Date(d.donationDate).toLocaleDateString("en-NG")}</div>
+            </div>
+            <div style={{ fontWeight: 700, color: colors.success }}>{koboToNaira(d.amountKobo)}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PortalPledgesPage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const pledges = state.pledges.filter((p) => p.pledgeStatus === "active");
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "member-portal" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>My Pledges</div>
+      </div>
+      {pledges.length === 0 && <div style={{ color: colors.textMuted }}>No active pledges</div>}
+      {pledges.map((p) => {
+        const pct = p.totalAmountKobo > 0 ? Math.round((p.paidAmountKobo / p.totalAmountKobo) * 100) : 0;
+        return (
+          <div key={p.id} style={s.card}>
+            <div style={{ fontWeight: 600, marginBottom: "4px" }}>{p.description}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "6px" }}>
+              <span>Paid: {koboToNaira(p.paidAmountKobo)}</span>
+              <span>Total: {koboToNaira(p.totalAmountKobo)}</span>
+            </div>
+            <div style={{ height: "6px", borderRadius: "3px", backgroundColor: colors.border }}>
+              <div style={{ height: "100%", width: `${pct}%`, backgroundColor: colors.success, borderRadius: "3px" }} />
+            </div>
+            <div style={{ fontSize: "11px", color: colors.textMuted, marginTop: "4px" }}>{pct}% fulfilled</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PortalEventsPage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const upcoming = state.events.filter((e) => e.startTime > Date.now()).slice(0, 10);
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "member-portal" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>My Events</div>
+      </div>
+      {upcoming.length === 0 && <div style={{ color: colors.textMuted }}>No upcoming events</div>}
+      {upcoming.map((e) => (
+        <div key={e.id} style={s.card}>
+          <div style={{ fontWeight: 600 }}>{e.title}</div>
+          <div style={{ fontSize: "12px", color: colors.textMuted }}>{new Date(e.startTime).toLocaleDateString("en-NG", { weekday: "short", month: "short", day: "numeric" })}</div>
+          {e.venue && <div style={{ fontSize: "12px", color: colors.textMuted }}>📍 {e.venue}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PortalProfilePage({ state, dispatch }: { state: AppState; dispatch: React.Dispatch<Action> }) {
+  const me = state.members[0] ?? null;
+  const [phone, setPhone] = useState(me?.phone ?? "");
+  const [address, setAddress] = useState(me?.address ?? "");
+  const [pending, setPending] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleSave = async () => {
+    if (!me) return;
+    setPending(true);
+    await apiPatch(`/members/${me.id}`, { phone, address });
+    setPending(false);
+    setDone(true);
+    setTimeout(() => setDone(false), 3000);
+  };
+
+  if (!me) return <div style={{ color: colors.textMuted }}>Profile not loaded</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }} onClick={() => dispatch({ type: "SET_PAGE", page: "member-portal" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>My Profile</div>
+      </div>
+      <div style={s.card}>
+        <div style={{ fontSize: "18px", fontWeight: 700 }}>{me.firstName} {me.lastName}</div>
+        <div style={{ fontSize: "13px", color: colors.textMuted }}>Member #{me.memberNumber ?? "—"}</div>
+        <div style={{ fontSize: "13px", color: colors.textMuted }}>{me.email ?? "No email"}</div>
+      </div>
+      {done && (
+        <div style={{ padding: "10px", backgroundColor: "#D1FAE5", color: colors.success, borderRadius: "8px", marginBottom: "12px" }}>
+          ✓ Update submitted — pending admin approval
+        </div>
+      )}
+      <div style={s.card}>
+        <div style={{ fontWeight: 600, marginBottom: "12px" }}>Update Contact Info</div>
+        <div style={{ marginBottom: "10px" }}>
+          <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>Phone</label>
+          <input type="tel" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${colors.border}`, fontSize: "14px", boxSizing: "border-box" as const }}
+            value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+        <div style={{ marginBottom: "10px" }}>
+          <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>Address</label>
+          <input type="text" style={{ width: "100%", padding: "10px", borderRadius: "8px", border: `1px solid ${colors.border}`, fontSize: "14px", boxSizing: "border-box" as const }}
+            value={address} onChange={(e) => setAddress(e.target.value)} />
+        </div>
+        <button style={{ width: "100%", padding: "12px", backgroundColor: colors.primary, color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: 600, opacity: pending ? 0.6 : 1 }}
+          onClick={handleSave} disabled={pending}>
+          {pending ? "Submitting…" : "Submit Update"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Language Switcher ────────────────────────────────────────────────────────
 
 function LanguageSwitcher({
@@ -1352,6 +1923,7 @@ const NAV_ITEMS = [
   { page: "donations" as Page, icon: "🙏", key: "donations" as const },
   { page: "pledges" as Page, icon: "🤝", key: "pledges" as const },
   { page: "events" as Page, icon: "📅", key: "events" as const },
+  { page: "analytics" as Page, icon: "📊", key: "analytics" as const },
 ];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -1445,12 +2017,32 @@ export function ChurchNGOApp() {
         return <EventsPage state={state} dispatch={dispatch} t={t} />;
       case "grants":
         return <GrantsPage state={state} dispatch={dispatch} t={t} />;
+      case "analytics":
+        return <AnalyticsPage dispatch={dispatch} />;
+      case "donors":
+        return <DonorsPage dispatch={dispatch} />;
+      case "donor-detail":
+        return <DonorDetailPage state={state} dispatch={dispatch} />;
+      case "projects":
+        return <ProjectsPage dispatch={dispatch} />;
+      case "project-create":
+        return <ProjectCreatePage dispatch={dispatch} />;
+      case "member-portal":
+        return <MemberPortal dispatch={dispatch} />;
+      case "portal-giving":
+        return <PortalGivingPage state={state} dispatch={dispatch} />;
+      case "portal-pledges":
+        return <PortalPledgesPage state={state} dispatch={dispatch} />;
+      case "portal-events":
+        return <PortalEventsPage state={state} dispatch={dispatch} />;
+      case "portal-profile":
+        return <PortalProfilePage state={state} dispatch={dispatch} />;
       default:
         return <DashboardPage state={state} dispatch={dispatch} t={t} />;
     }
   };
 
-  const mainPage = (["dashboard", "members", "donations", "pledges", "events"] as Page[]).includes(
+  const mainPage = (["dashboard", "members", "donations", "pledges", "events", "analytics"] as Page[]).includes(
     state.page
   )
     ? state.page

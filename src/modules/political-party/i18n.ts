@@ -26,6 +26,7 @@ export interface PartyTranslations {
     positions: string;
     nominations: string;
     campaignFinance: string;
+    analytics: string;
   };
   dashboard: {
     title: string;
@@ -209,6 +210,7 @@ const en: PartyTranslations = {
     positions: "Positions",
     nominations: "Nominations",
     campaignFinance: "Finance",
+    analytics: "Analytics",
   },
   dashboard: {
     title: "Party Dashboard",
@@ -392,6 +394,7 @@ const yo: PartyTranslations = {
     positions: "Awọn Ipo",
     nominations: "Awọn Yiyan",
     campaignFinance: "Owó Ìdibo",
+    analytics: "Ìtúpalẹ",
   },
   dashboard: {
     title: "Iwe Akọọlẹ Ẹgbẹ",
@@ -575,6 +578,7 @@ const ig: PartyTranslations = {
     positions: "Ọkwa Ọrụ",
     nominations: "Nhọrọ Onye",
     campaignFinance: "Ego Mkpọsa",
+    analytics: "Nyocha",
   },
   dashboard: {
     title: "Ihe Nlele Otu",
@@ -758,6 +762,7 @@ const ha: PartyTranslations = {
     positions: "Mukamai",
     nominations: "Zaɓe",
     campaignFinance: "Kuɗin Yaƙi",
+    analytics: "Bincike",
   },
   dashboard: {
     title: "Allon Sarrafa Ƙungiya",

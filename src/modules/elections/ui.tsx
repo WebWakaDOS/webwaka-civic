@@ -19,6 +19,7 @@ import {
   volunteersApi,
   fundraisingApi,
   resultsApi,
+  analyticsApi,
   type Election,
   type Candidate,
   type Volunteer,
@@ -27,6 +28,8 @@ import {
   type Expense,
   type BudgetStatus,
   type PublicResults,
+  type ElectionAnalytics,
+  type ElectionComparison,
 } from "./apiClient";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,7 +45,9 @@ type Page =
   | "expense-create"
   | "results"
   | "collation"
-  | "admin";
+  | "admin"
+  | "analytics"
+  | "compare-elections";
 
 interface AppState {
   page: Page;
@@ -240,6 +245,9 @@ function ElectionDetailPage({ state, dispatch }: { state: AppState; dispatch: Re
           )}
           <button style={S.btn(C.primary)} onClick={() => dispatch({ type: "SET_PAGE", page: "results" })}>
             📊 Results
+          </button>
+          <button style={S.btn(C.primary)} onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>
+            📈 Analytics
           </button>
         </div>
       </div>
@@ -779,6 +787,256 @@ function AdminPage({ state, dispatch, tenantId }: { state: AppState; dispatch: R
 
 // ─── Main Module Component ────────────────────────────────────────────────────
 
+// ─── Phase 5: Election Analytics Page (EL12) ──────────────────────────────────
+
+function ElectionAnalyticsPage({
+  state,
+  dispatch,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+}) {
+  const [data, setData] = useState<ElectionAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const electionId = state.selectedElection?.id;
+
+  useEffect(() => {
+    if (!electionId) return;
+    setLoading(true);
+    analyticsApi.electionAnalytics(electionId).then((res) => {
+      if (res.success) setData(res.data);
+      setLoading(false);
+    });
+  }, [electionId]);
+
+  if (!electionId) return (
+    <div style={{ padding: "24px", textAlign: "center", color: "#6B7A8D" }}>
+      Select an election first.
+    </div>
+  );
+
+  const maxVotes = data ? Math.max(...data.results.map((r) => r.voteCount), 1) : 1;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}
+          onClick={() => dispatch({ type: "SET_PAGE", page: "election-detail" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>📊 Election Analytics</div>
+      </div>
+
+      {loading ? (
+        <Spinner />
+      ) : !data ? (
+        <div style={{ color: "#6B7A8D", textAlign: "center", padding: "24px" }}>No analytics available</div>
+      ) : (
+        <>
+          {/* Turnout */}
+          <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", marginBottom: "14px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontWeight: 700, marginBottom: "10px" }}>Voter Turnout</div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+              {[
+                { label: "Eligible", value: data.turnout.eligibleVoters.toLocaleString() },
+                { label: "Voted", value: data.turnout.votesCast.toLocaleString() },
+                { label: "Turnout", value: `${data.turnout.turnoutPercent.toFixed(1)}%` },
+              ].map((s) => (
+                <div key={s.label} style={{ flex: 1, backgroundColor: "#F4F7FA", borderRadius: "8px", padding: "10px", textAlign: "center" }}>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "#1A3A6B" }}>{s.value}</div>
+                  <div style={{ fontSize: "10px", color: "#6B7A8D" }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ height: "8px", borderRadius: "4px", backgroundColor: "#E5EAF0" }}>
+              <div style={{ height: "100%", width: `${Math.min(100, data.turnout.turnoutPercent)}%`, backgroundColor: "#1A3A6B", borderRadius: "4px" }} />
+            </div>
+          </div>
+
+          {/* Candidate Results */}
+          <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", marginBottom: "14px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+            <div style={{ fontWeight: 700, marginBottom: "10px" }}>Candidate Results</div>
+            {data.results.map((r, i) => (
+              <div key={r.candidateId} style={{ marginBottom: "10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginBottom: "4px" }}>
+                  <span style={{ fontWeight: i === 0 ? 700 : 400 }}>#{r.rank} {r.name} {i === 0 ? "🏆" : ""}</span>
+                  <span style={{ color: "#6B7A8D" }}>{r.voteCount.toLocaleString()} ({r.votePercent.toFixed(1)}%)</span>
+                </div>
+                <div style={{ height: "6px", borderRadius: "3px", backgroundColor: "#E5EAF0" }}>
+                  <div style={{ height: "100%", width: `${(r.voteCount / maxVotes) * 100}%`, backgroundColor: i === 0 ? "#D4AF37" : "#1A3A6B", borderRadius: "3px" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Win Margin */}
+          {data.winMargin && (
+            <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", marginBottom: "14px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+              <div style={{ fontWeight: 700, marginBottom: "8px" }}>Win Margin</div>
+              <div style={{ fontSize: "28px", fontWeight: 700, color: "#1A6B3C", textAlign: "center" }}>
+                {data.winMargin.marginPercent.toFixed(2)}%
+              </div>
+              <div style={{ textAlign: "center", fontSize: "12px", color: "#6B7A8D" }}>
+                {data.winMargin.marginVotes.toLocaleString()} votes
+              </div>
+            </div>
+          )}
+
+          {/* Geographic Breakdown */}
+          {data.geographic.length > 0 && (
+            <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.08)" }}>
+              <div style={{ fontWeight: 700, marginBottom: "10px" }}>Polling Station Breakdown</div>
+              {data.geographic.map((g) => (
+                <div key={g.stationId} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0F4F8", fontSize: "13px" }}>
+                  <span>{g.stationName}</span>
+                  <span style={{ fontWeight: 600, color: "#1A3A6B" }}>{g.votesCast.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Compare button */}
+          <button
+            style={{ width: "100%", marginTop: "16px", padding: "14px", backgroundColor: "#1A3A6B", color: "#fff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}
+            onClick={() => dispatch({ type: "SET_PAGE", page: "compare-elections" })}
+          >
+            ⚖️ Compare Elections
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Phase 5: Compare Elections Page (CE10) ───────────────────────────────────
+
+function CompareElectionsPage({
+  state,
+  dispatch,
+}: {
+  state: AppState;
+  dispatch: React.Dispatch<Action>;
+}) {
+  const [elections, setElections] = useState<Array<{ id: string; title: string; date: number }>>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [comparison, setComparison] = useState<ElectionComparison | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+
+  useEffect(() => {
+    const tenantId = (window as unknown as { _webwakaElectionTenantId?: string })._webwakaElectionTenantId ?? "";
+    setLoadingList(true);
+    electionsApi.list(tenantId).then((res) => {
+      if (res.success) {
+        setElections(res.data.elections.map((e) => ({ id: e.id, title: e.name, date: e.startDate })));
+      }
+      setLoadingList(false);
+    });
+  }, []);
+
+  const toggleElection = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : prev.length < 2 ? [...prev, id] : prev
+    );
+    setComparison(null);
+  };
+
+  const runCompare = async () => {
+    if (selectedIds.length !== 2) return;
+    setLoading(true);
+    const res = await analyticsApi.compareElections(selectedIds);
+    if (res.success) setComparison(res.data);
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
+        <button style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer" }}
+          onClick={() => dispatch({ type: "SET_PAGE", page: "analytics" })}>←</button>
+        <div style={{ fontSize: "20px", fontWeight: 700 }}>⚖️ Compare Elections</div>
+      </div>
+
+      <div style={{ fontSize: "13px", color: "#6B7A8D", marginBottom: "10px" }}>Select 2 elections to compare:</div>
+
+      {loadingList ? <Spinner /> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
+          {elections.map((e) => {
+            const selected = selectedIds.includes(e.id);
+            const disabled = !selected && selectedIds.length >= 2;
+            return (
+              <button
+                key={e.id}
+                disabled={disabled}
+                onClick={() => toggleElection(e.id)}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderRadius: "10px", border: selected ? "2px solid #1A3A6B" : "1px solid #E5EAF0", backgroundColor: selected ? "#EBF0FA" : "#fff", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, textAlign: "left" }}
+              >
+                <span style={{ fontWeight: selected ? 700 : 400, fontSize: "13px" }}>{e.title}</span>
+                {selected && <span style={{ fontSize: "18px" }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <button
+        disabled={selectedIds.length !== 2 || loading}
+        onClick={() => void runCompare()}
+        style={{ width: "100%", padding: "14px", backgroundColor: selectedIds.length === 2 ? "#1A3A6B" : "#CBD5E0", color: "#fff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: 600, cursor: selectedIds.length === 2 ? "pointer" : "not-allowed" }}
+      >
+        {loading ? "Comparing…" : "Compare"}
+      </button>
+
+      {comparison && (
+        <div style={{ marginTop: "20px" }}>
+          <div style={{ fontWeight: 700, marginBottom: "10px" }}>Candidate Comparison</div>
+          {comparison.candidateComparison.map((cand) => {
+            const ids = comparison.elections.map((e) => e.id);
+            const maxVotes = Math.max(...Object.values(cand.votes), 1);
+            return (
+              <div key={cand.name} style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "14px 16px", marginBottom: "10px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                  <span style={{ fontWeight: 600, fontSize: "13px" }}>{cand.name}</span>
+                  {cand.swingPercent !== 0 && (
+                    <span style={{ fontSize: "12px", fontWeight: 600, color: cand.swingPercent > 0 ? "#1A6B3C" : "#C0392B" }}>
+                      {cand.swingPercent > 0 ? "▲" : "▼"} {Math.abs(cand.swingPercent).toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+                {ids.map((id, i) => {
+                  const elTitle = comparison.elections.find((e) => e.id === id)?.title ?? id;
+                  const votes = cand.votes[id] ?? 0;
+                  const pct = cand.pct[id] ?? 0;
+                  return (
+                    <div key={id} style={{ marginBottom: "6px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#6B7A8D", marginBottom: "2px" }}>
+                        <span>{elTitle}</span>
+                        <span>{votes.toLocaleString()} ({pct.toFixed(1)}%)</span>
+                      </div>
+                      <div style={{ height: "5px", borderRadius: "3px", backgroundColor: "#E5EAF0" }}>
+                        <div style={{ height: "100%", width: `${(votes / maxVotes) * 100}%`, backgroundColor: i === 0 ? "#1A3A6B" : "#D4AF37", borderRadius: "3px" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+          {/* Turnout comparison */}
+          <div style={{ backgroundColor: "#fff", borderRadius: "12px", padding: "14px 16px", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
+            <div style={{ fontWeight: 700, marginBottom: "8px" }}>Total Votes</div>
+            {comparison.elections.map((e) => (
+              <div key={e.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "13px" }}>
+                <span>{e.title}</span>
+                <span style={{ fontWeight: 600, color: "#1A3A6B" }}>{(comparison.totalVotes[e.id] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const NAV = [
   { page: "elections" as Page, icon: "🗳️", label: "Elections" },
   { page: "volunteers" as Page, icon: "🙋", label: "Volunteers" },
@@ -879,6 +1137,8 @@ export function ElectionsApp({ tenantId, onLogout }: { tenantId: string; onLogou
       case "results":         return <ResultsPage state={state} dispatch={dispatch} electionId={electionId} />;
       case "collation":       return <CollationPage state={state} dispatch={dispatch} electionId={electionId} />;
       case "admin":           return <AdminPage state={state} dispatch={dispatch} tenantId={tenantId} />;
+      case "analytics":       return <ElectionAnalyticsPage state={state} dispatch={dispatch} />;
+      case "compare-elections": return <CompareElectionsPage state={state} dispatch={dispatch} />;
       default:                return <ElectionsPage state={state} dispatch={dispatch} onSelect={handleSelectElection} />;
     }
   };

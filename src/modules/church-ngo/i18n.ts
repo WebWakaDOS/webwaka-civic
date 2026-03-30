@@ -21,6 +21,7 @@ export interface CivicTranslations {
     grants: string;
     announcements: string;
     settings: string;
+    analytics: string;
   };
   dashboard: {
     title: string;
@@ -153,6 +154,7 @@ const translations: Record<Language, CivicTranslations> = {
       grants: "Grants",
       announcements: "Announcements",
       settings: "Settings",
+      analytics: "Analytics",
     },
     dashboard: {
       title: "Church & NGO Dashboard",
@@ -284,6 +286,7 @@ const translations: Record<Language, CivicTranslations> = {
       grants: "Àánù",
       announcements: "Àwọn Ìkéde",
       settings: "Ètò",
+      analytics: "Ìtúpalẹ̀",
     },
     dashboard: {
       title: "Pẹpẹ Ṣọọṣì & NGO",
@@ -415,6 +418,7 @@ const translations: Record<Language, CivicTranslations> = {
       grants: "Enyemaka",
       announcements: "Mkọwapụta",
       settings: "Ntọala",
+      analytics: "Nyocha",
     },
     dashboard: {
       title: "Ọdịdị Chọọchị & NGO",
@@ -546,6 +550,7 @@ const translations: Record<Language, CivicTranslations> = {
       grants: "Tallafi",
       announcements: "Sanarwa",
       settings: "Saituna",
+      analytics: "Bincike",
     },
     dashboard: {
       title: "Allon Cocin & NGO",
