@@ -885,6 +885,15 @@ import type {
   PartyMeeting,
   PartyAnnouncement,
   PartyIdCard,
+  PartyNomination,
+  NominationStatus,
+  PartyCampaignAccount,
+  PartyCampaignTransaction,
+  CampaignPositionLevel,
+  CampaignTransactionType,
+  ElectionResultCollation,
+  CollationLevel,
+  CollationStatus,
 } from "./schema.ts";
 
 // ─── Party Organization Queries ───────────────────────────────────────────────
@@ -1542,4 +1551,255 @@ export async function getPartyDashboardSummary(
     totalStructures: (batchResults[4]?.results[0] as { count: number })?.count ?? 0,
     upcomingMeetings: (batchResults[5]?.results[0] as { count: number })?.count ?? 0,
   };
+}
+
+// ─── Party Nominations (T004 / P05) ──────────────────────────────────────────
+
+export async function getPartyNominations(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  status?: NominationStatus
+): Promise<PartyNomination[]> {
+  const sql = status
+    ? "SELECT * FROM party_nominations WHERE tenantId = ? AND organizationId = ? AND status = ? AND deletedAt IS NULL ORDER BY nominatedAt DESC"
+    : "SELECT * FROM party_nominations WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL ORDER BY nominatedAt DESC";
+  const stmt = status
+    ? db.prepare(sql).bind(tenantId, organizationId, status)
+    : db.prepare(sql).bind(tenantId, organizationId);
+  const res = await stmt.all<PartyNomination>();
+  return res.results ?? [];
+}
+
+export async function createPartyNomination(
+  db: D1Database,
+  nom: PartyNomination
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_nominations (id, tenantId, organizationId, memberId, position, constituency,
+       electionRef, status, nominatorId, nominatedAt, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      nom.id, nom.tenantId, nom.organizationId, nom.memberId, nom.position,
+      nom.constituency, nom.electionRef ?? null, nom.status, nom.nominatorId,
+      nom.nominatedAt, nom.createdAt, nom.updatedAt
+    )
+    .run();
+}
+
+export async function updatePartyNominationStatus(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  status: NominationStatus,
+  actorId: string,
+  notes?: string
+): Promise<PartyNomination | null> {
+  const now = Date.now();
+  await db
+    .prepare(
+      `UPDATE party_nominations SET status = ?, vettedBy = ?, vettingNotes = COALESCE(?, vettingNotes), updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(status, actorId, notes ?? null, now, id, tenantId)
+    .run();
+  const res = await db
+    .prepare("SELECT * FROM party_nominations WHERE id = ? AND tenantId = ?")
+    .bind(id, tenantId)
+    .first<PartyNomination>();
+  return res ?? null;
+}
+
+// ─── Campaign Finance (T005 / P06) ───────────────────────────────────────────
+
+export async function createCampaignAccount(
+  db: D1Database,
+  account: PartyCampaignAccount
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_campaign_accounts (id, tenantId, organizationId, electionRef, candidateId,
+       positionLevel, limitKobo, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      account.id, account.tenantId, account.organizationId,
+      account.electionRef ?? null, account.candidateId ?? null,
+      account.positionLevel, account.limitKobo, account.createdAt, account.updatedAt
+    )
+    .run();
+}
+
+export async function getCampaignAccounts(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string
+): Promise<PartyCampaignAccount[]> {
+  const res = await db
+    .prepare(
+      "SELECT * FROM party_campaign_accounts WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL ORDER BY createdAt DESC"
+    )
+    .bind(tenantId, organizationId)
+    .all<PartyCampaignAccount>();
+  return res.results ?? [];
+}
+
+export async function getCampaignAccountById(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<PartyCampaignAccount | null> {
+  return (
+    (await db
+      .prepare("SELECT * FROM party_campaign_accounts WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+      .bind(id, tenantId)
+      .first<PartyCampaignAccount>()) ?? null
+  );
+}
+
+export async function addCampaignTransaction(
+  db: D1Database,
+  tx: PartyCampaignTransaction
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO party_campaign_transactions (id, tenantId, organizationId, accountId, transactionType,
+       category, description, amountKobo, currency, transactionDate, evidenceUrl, recordedBy, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      tx.id, tx.tenantId, tx.organizationId, tx.accountId, tx.transactionType,
+      tx.category, tx.description, tx.amountKobo, tx.currency, tx.transactionDate,
+      tx.evidenceUrl ?? null, tx.recordedBy, tx.createdAt, tx.updatedAt
+    )
+    .run();
+}
+
+export async function getCampaignTransactions(
+  db: D1Database,
+  accountId: string,
+  tenantId: string,
+  transactionType?: CampaignTransactionType
+): Promise<PartyCampaignTransaction[]> {
+  const sql = transactionType
+    ? "SELECT * FROM party_campaign_transactions WHERE accountId = ? AND tenantId = ? AND transactionType = ? AND deletedAt IS NULL ORDER BY transactionDate DESC"
+    : "SELECT * FROM party_campaign_transactions WHERE accountId = ? AND tenantId = ? AND deletedAt IS NULL ORDER BY transactionDate DESC";
+  const stmt = transactionType
+    ? db.prepare(sql).bind(accountId, tenantId, transactionType)
+    : db.prepare(sql).bind(accountId, tenantId);
+  const res = await stmt.all<PartyCampaignTransaction>();
+  return res.results ?? [];
+}
+
+export async function getCampaignFinanceSummary(
+  db: D1Database,
+  accountId: string,
+  tenantId: string
+): Promise<{ totalIncomeKobo: number; totalExpenditureKobo: number; transactionCount: number }> {
+  const res = await db.batch([
+    db.prepare("SELECT COALESCE(SUM(amountKobo),0) as total FROM party_campaign_transactions WHERE accountId = ? AND tenantId = ? AND transactionType = 'income' AND deletedAt IS NULL").bind(accountId, tenantId),
+    db.prepare("SELECT COALESCE(SUM(amountKobo),0) as total FROM party_campaign_transactions WHERE accountId = ? AND tenantId = ? AND transactionType = 'expenditure' AND deletedAt IS NULL").bind(accountId, tenantId),
+    db.prepare("SELECT COUNT(*) as count FROM party_campaign_transactions WHERE accountId = ? AND tenantId = ? AND deletedAt IS NULL").bind(accountId, tenantId),
+  ]);
+  return {
+    totalIncomeKobo: (res[0]?.results[0] as { total: number })?.total ?? 0,
+    totalExpenditureKobo: (res[1]?.results[0] as { total: number })?.total ?? 0,
+    transactionCount: (res[2]?.results[0] as { count: number })?.count ?? 0,
+  };
+}
+
+// ─── Election Result Collations (T006 / EL02) ────────────────────────────────
+
+export async function createResultCollation(
+  db: D1Database,
+  row: ElectionResultCollation
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO election_result_collations (id, tenantId, electionId, candidateId, level,
+       pollingUnit, ward, lga, state, votesCount, spoiltVotes, accreditedVoters,
+       collatedBy, collatedAt, status, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      row.id, row.tenantId, row.electionId, row.candidateId, row.level,
+      row.pollingUnit ?? null, row.ward ?? null, row.lga ?? null, row.state ?? null,
+      row.votesCount, row.spoiltVotes ?? null, row.accreditedVoters ?? null,
+      row.collatedBy, row.collatedAt, row.status, row.createdAt, row.updatedAt
+    )
+    .run();
+}
+
+export async function getElectionCollations(
+  db: D1Database,
+  electionId: string,
+  tenantId: string,
+  level?: CollationLevel
+): Promise<ElectionResultCollation[]> {
+  const sql = level
+    ? "SELECT * FROM election_result_collations WHERE electionId = ? AND tenantId = ? AND level = ? ORDER BY collatedAt DESC"
+    : "SELECT * FROM election_result_collations WHERE electionId = ? AND tenantId = ? ORDER BY collatedAt DESC";
+  const stmt = level
+    ? db.prepare(sql).bind(electionId, tenantId, level)
+    : db.prepare(sql).bind(electionId, tenantId);
+  const res = await stmt.all<ElectionResultCollation>();
+  return res.results ?? [];
+}
+
+export async function certifyCollation(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  certifiedBy: string
+): Promise<ElectionResultCollation | null> {
+  const now = Date.now();
+  await db
+    .prepare(
+      "UPDATE election_result_collations SET status = 'certified', certifiedBy = ?, certifiedAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?"
+    )
+    .bind(certifiedBy, now, now, id, tenantId)
+    .run();
+  return (
+    (await db
+      .prepare("SELECT * FROM election_result_collations WHERE id = ? AND tenantId = ?")
+      .bind(id, tenantId)
+      .first<ElectionResultCollation>()) ?? null
+  );
+}
+
+export async function getPublicElectionResults(
+  db: D1Database,
+  electionId: string
+): Promise<{ candidateId: string; totalVotes: number; percentage: number }[]> {
+  const res = await db
+    .prepare(
+      `SELECT candidateId, SUM(votesCount) as totalVotes FROM election_result_collations
+       WHERE electionId = ? AND status = 'certified' GROUP BY candidateId ORDER BY totalVotes DESC`
+    )
+    .bind(electionId)
+    .all<{ candidateId: string; totalVotes: number }>();
+  const rows = res.results ?? [];
+  const grandTotal = rows.reduce((s, r) => s + r.totalVotes, 0);
+  return rows.map((r) => ({
+    candidateId: r.candidateId,
+    totalVotes: r.totalVotes,
+    percentage: grandTotal > 0 ? Math.round((r.totalVotes / grandTotal) * 10000) / 100 : 0,
+  }));
+}
+
+export async function getPublicCollationBreakdown(
+  db: D1Database,
+  electionId: string,
+  level?: CollationLevel
+): Promise<ElectionResultCollation[]> {
+  const sql = level
+    ? "SELECT * FROM election_result_collations WHERE electionId = ? AND level = ? AND status = 'certified' ORDER BY collatedAt DESC"
+    : "SELECT * FROM election_result_collations WHERE electionId = ? AND status = 'certified' ORDER BY collatedAt DESC";
+  const stmt = level
+    ? db.prepare(sql).bind(electionId, level)
+    : db.prepare(sql).bind(electionId);
+  const res = await stmt.all<ElectionResultCollation>();
+  return res.results ?? [];
 }

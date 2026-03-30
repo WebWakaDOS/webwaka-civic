@@ -27,6 +27,7 @@ import {
   nowMs,
 } from "../../../core/response";
 import { createDocumentService } from "../../../core/services/documents";
+import { createNotificationService } from "../../../core/services/notifications";
 import {
   createPaymentService,
   verifyPaystackWebhook,
@@ -412,6 +413,19 @@ app.post("/api/civic/members", async (c) => {
       memberName: `${member.firstName} ${member.lastName}`,
     });
 
+    // T001: E03 — send welcome notification via platform CORE-COMMS
+    if (member.phone || member.email) {
+      const notifSvc = createNotificationService(c.env);
+      await notifSvc.sendWelcome(c.env, {
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        recipientPhone: member.phone,
+        recipientEmail: member.email,
+        name: member.firstName,
+        membershipNumber: member.id,
+      }).catch((e) => logger.error("Welcome notification failed", { error: String(e) }));
+    }
+
     logger.info("Member registered", { memberId: member.id });
     return apiSuccess(member);
   } catch (err) {
@@ -584,6 +598,26 @@ app.post("/api/civic/donations", async (c) => {
       memberId: donation.memberId,
     } });
 
+    // T001: E03 — donation receipt notification
+    if (body.customerPhone || body.customerEmail) {
+      const notifSvc = createNotificationService(c.env);
+      await notifSvc.requestNotification({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        recipientPhone: body.customerPhone as string | undefined,
+        recipientEmail: body.customerEmail as string | undefined,
+        channel: body.customerPhone ? "whatsapp" : "email",
+        templateId: "donation.receipt",
+        data: {
+          receiptNumber: donation.receiptNumber,
+          amountKobo: donation.amountKobo,
+          donationType: donation.donationType,
+        },
+        priority: "high",
+        idempotencyKey: `donation-receipt:${donation.id}`,
+      }).catch((e) => logger.error("Donation receipt notification failed", { error: String(e) }));
+    }
+
     if (donation.paymentMethod === "paystack" && body.customerEmail) {
       const paySvc = createPaymentService(c.env);
       await paySvc.initializePayment({
@@ -719,6 +753,23 @@ app.post("/api/civic/pledges/:id/payment", async (c) => {
       totalAmountKobo: updatedPledge.totalAmountKobo,
     } });
 
+    // T001: E03 — thank-you notification on pledge fulfillment
+    if (updatedPledge.pledgeStatus === "fulfilled") {
+      const notifSvc = createNotificationService(c.env);
+      await notifSvc.requestNotification({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        channel: "whatsapp",
+        templateId: "pledge.fulfilled",
+        data: {
+          pledgeId: updatedPledge.id,
+          totalAmountKobo: updatedPledge.totalAmountKobo,
+        },
+        priority: "normal",
+        idempotencyKey: `pledge-fulfilled:${updatedPledge.id}`,
+      }).catch((e) => logger.error("Pledge fulfilled notification failed", { error: String(e) }));
+    }
+
     if (body.via === "paystack" && body.customerEmail) {
       const paySvc = createPaymentService(c.env);
       await paySvc.initializePayment({
@@ -810,6 +861,18 @@ app.post("/api/civic/events", async (c) => {
       eventType: event.eventType,
       startTime: event.startTime,
     } });
+
+    // T001: E03 — broadcast upcoming event notification to org members
+    const notifSvc = createNotificationService(c.env);
+    await notifSvc.requestNotification({
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      channel: "whatsapp",
+      templateId: "event.upcoming",
+      data: { title: event.title, startTime: event.startTime, venue: event.venue ?? "" },
+      priority: "normal",
+      idempotencyKey: `event-upcoming:${event.id}`,
+    }).catch((e) => logger.error("Event notification failed", { error: String(e) }));
 
     logger.info("Event created", { eventId: event.id });
     return apiSuccess(event);
@@ -1135,6 +1198,107 @@ app.get("/api/civic/announcements", async (c) => {
     return apiSuccess({ announcements });
   } catch (err) {
     logger.error("Failed to list announcements", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+// ─── T002: E13 — Bulk Member Import (CSV / JSON) ──────────────────────────────
+
+app.post("/api/civic/members/import", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("member-import", payload.tenantId);
+
+  if (payload.role !== "admin") {
+    return apiError("Forbidden — admin role required", 403);
+  }
+
+  try {
+    const contentType = c.req.header("content-type") ?? "";
+    let rows: Partial<CivicMember>[] = [];
+
+    if (contentType.includes("text/csv")) {
+      const text = await c.req.text();
+      const lines = text.split("\n").filter((l) => l.trim());
+      if (lines.length < 2) return apiError("CSV must have header + at least 1 row");
+      const headers = lines[0].split(",").map((h) => h.trim());
+      rows = lines.slice(1).map((line) => {
+        const vals = line.split(",").map((v) => v.trim());
+        const obj: Record<string, string> = {};
+        headers.forEach((h, i) => { obj[h] = vals[i] ?? ""; });
+        return obj as Partial<CivicMember>;
+      });
+    } else {
+      const body = await c.req.json<{ rows: Partial<CivicMember>[] }>();
+      rows = body.rows ?? [];
+    }
+
+    if (rows.length === 0) return apiError("No rows provided");
+    if (rows.length > 200) return apiError("Maximum 200 rows per import");
+
+    const notifSvc = createNotificationService(c.env);
+    const eventBus = createEventBus(c.env);
+
+    let imported = 0;
+    let failed = 0;
+    const errors: { row: number; reason: string }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row.firstName || !row.lastName || !row.phone) {
+        errors.push({ row: i + 1, reason: "firstName, lastName, phone are required" });
+        failed++;
+        continue;
+      }
+      try {
+        const member: CivicMember = {
+          id: generateId(),
+          tenantId: payload.tenantId,
+          organizationId: payload.organizationId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          otherNames: row.otherNames,
+          email: row.email,
+          phone: row.phone,
+          dateOfBirth: row.dateOfBirth,
+          gender: row.gender ?? "prefer_not_to_say",
+          address: row.address,
+          city: row.city,
+          state: row.state,
+          country: row.country ?? "NG",
+          occupation: row.occupation,
+          memberStatus: row.memberStatus ?? "active",
+          discipleshipLevel: row.discipleshipLevel ?? "new_convert",
+          joinedAt: row.joinedAt ?? nowMs(),
+          ndprConsent: row.ndprConsent ?? 0,
+          createdAt: nowMs(),
+          updatedAt: nowMs(),
+        };
+        await createMember(c.env.DB, member);
+        await eventBus.publish("civic.member.registered", payload.tenantId, payload.organizationId, {
+          memberId: member.id,
+          memberName: `${member.firstName} ${member.lastName}`,
+        });
+        if (member.phone || member.email) {
+          await notifSvc.sendWelcome(c.env, {
+            tenantId: payload.tenantId,
+            organizationId: payload.organizationId,
+            recipientPhone: member.phone,
+            recipientEmail: member.email,
+            name: member.firstName,
+            membershipNumber: member.id,
+          }).catch(() => {});
+        }
+        imported++;
+      } catch (rowErr) {
+        errors.push({ row: i + 1, reason: String(rowErr) });
+        failed++;
+      }
+    }
+
+    logger.info("Bulk import complete", { imported, failed, tenantId: payload.tenantId });
+    return apiSuccess({ imported, failed, errors });
+  } catch (err) {
+    logger.error("Bulk import failed", { error: String(err) });
     return apiError("Internal server error", 500);
   }
 });

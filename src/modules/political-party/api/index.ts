@@ -61,6 +61,15 @@ import {
   createPartyIdCard,
   revokePartyIdCard,
   getPartyDashboardSummary,
+  getPartyNominations,
+  createPartyNomination,
+  updatePartyNominationStatus,
+  createCampaignAccount,
+  getCampaignAccounts,
+  getCampaignAccountById,
+  addCampaignTransaction,
+  getCampaignTransactions,
+  getCampaignFinanceSummary,
   type D1Database,
 } from "../../../core/db/queries";
 import type {
@@ -72,8 +81,13 @@ import type {
   PartyMeeting,
   PartyAnnouncement,
   PartyIdCard,
+  PartyNomination,
+  NominationStatus,
+  PartyCampaignAccount,
+  PartyCampaignTransaction,
+  CampaignPositionLevel,
 } from "../../../core/db/schema";
-import { PARTY_MIGRATION_SQL } from "../../../core/db/schema";
+import { PARTY_MIGRATION_SQL, ELECTORAL_ACT_LIMITS_KOBO } from "../../../core/db/schema";
 
 const logger = createLogger("political-party-api");
 
@@ -945,6 +959,299 @@ app.post("/api/party/sync/push", async (c) => {
     }
   }
   return apiSuccess({ processed: results.length, results });
+});
+
+// ─── T003: P03 — INEC Membership Register Export ─────────────────────────────
+
+app.get("/api/party/members/export", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin") {
+    return apiError("Forbidden — admin role required", 403);
+  }
+
+  try {
+    const format = new URL(c.req.url).searchParams.get("format") ?? "csv";
+    const members = await getPartyMembersByOrg(c.env.DB, payload.tenantId, payload.organizationId);
+
+    if (format === "json") {
+      return apiSuccess({ members });
+    }
+
+    // CSV export
+    const headers = ["membershipNumber", "firstName", "lastName", "phone", "state", "lga", "ward", "structureId", "memberStatus"];
+    const rows = members.map((m) =>
+      [
+        m.membershipNumber,
+        m.firstName,
+        m.lastName,
+        m.phone ?? "",
+        m.state ?? "",
+        m.lga ?? "",
+        m.ward ?? "",
+        m.structureId ?? "",
+        m.memberStatus,
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")
+    );
+    const csv = [headers.join(","), ...rows].join("\n");
+    const now = new Date().toISOString().slice(0, 10);
+    return new Response(csv, {
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="inec-register-${payload.organizationId}-${now}.csv"`,
+      },
+    });
+  } catch (err) {
+    logger.error("INEC export failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+// ─── T004: P05 — Candidate Vetting & Nomination Workflow ──────────────────────
+
+app.get("/api/party/nominations", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  try {
+    const status = new URL(c.req.url).searchParams.get("status") as NominationStatus | undefined;
+    const nominations = await getPartyNominations(c.env.DB, payload.tenantId, payload.organizationId, status);
+    return apiSuccess({ nominations });
+  } catch (err) {
+    logger.error("Failed to list nominations", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.post("/api/party/nominations", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "officer") {
+    return apiError("Forbidden — admin or officer role required", 403);
+  }
+
+  try {
+    const body = await c.req.json<Partial<PartyNomination>>();
+    if (!body.memberId) return apiError("memberId is required");
+    if (!body.position) return apiError("position is required");
+    if (!body.constituency) return apiError("constituency is required");
+
+    const nom: PartyNomination = {
+      id: generateId(),
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      memberId: body.memberId,
+      position: body.position,
+      constituency: body.constituency,
+      electionRef: body.electionRef,
+      status: "pending",
+      nominatorId: payload.sub,
+      nominatedAt: nowMs(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
+    };
+    await createPartyNomination(c.env.DB, nom);
+    await emitEvent(c.env, "party.nomination.created", payload.tenantId, {
+      nominationId: nom.id,
+      memberId: nom.memberId,
+      position: nom.position,
+      organizationId: payload.organizationId,
+    });
+    return apiSuccess(nom);
+  } catch (err) {
+    logger.error("Failed to create nomination", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.patch("/api/party/nominations/:id/approve", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin") return apiError("Forbidden — admin role required", 403);
+  try {
+    const body = await c.req.json<{ notes?: string }>().catch(() => ({}));
+    const nom = await updatePartyNominationStatus(c.env.DB, c.req.param("id"), payload.tenantId, "approved", payload.sub, body.notes);
+    if (!nom) return apiError("Nomination not found", 404);
+    // Emit bridge event → CIV-3 candidate nomination
+    await emitEvent(c.env, "candidate.nominated", payload.tenantId, {
+      nominationId: nom.id,
+      memberId: nom.memberId,
+      position: nom.position,
+      constituency: nom.constituency,
+      electionRef: nom.electionRef,
+      organizationId: payload.organizationId,
+    });
+    return apiSuccess(nom);
+  } catch (err) {
+    logger.error("Failed to approve nomination", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.patch("/api/party/nominations/:id/reject", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin") return apiError("Forbidden — admin role required", 403);
+  try {
+    const body = await c.req.json<{ notes?: string }>().catch(() => ({}));
+    const nom = await updatePartyNominationStatus(c.env.DB, c.req.param("id"), payload.tenantId, "rejected", payload.sub, body.notes);
+    if (!nom) return apiError("Nomination not found", 404);
+    await emitEvent(c.env, "party.nomination.rejected", payload.tenantId, { nominationId: nom.id, organizationId: payload.organizationId });
+    return apiSuccess(nom);
+  } catch (err) {
+    logger.error("Failed to reject nomination", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.patch("/api/party/nominations/:id/submit", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin") return apiError("Forbidden — admin role required", 403);
+  try {
+    const nom = await updatePartyNominationStatus(c.env.DB, c.req.param("id"), payload.tenantId, "submitted", payload.sub);
+    if (!nom) return apiError("Nomination not found", 404);
+    await emitEvent(c.env, "party.nomination.submitted", payload.tenantId, { nominationId: nom.id, organizationId: payload.organizationId });
+    return apiSuccess(nom);
+  } catch (err) {
+    logger.error("Failed to submit nomination", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+// ─── T005: P06 — Campaign Finance Tracker (Electoral Act 2022) ────────────────
+
+app.get("/api/party/campaign-finance", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  try {
+    const accounts = await getCampaignAccounts(c.env.DB, payload.tenantId, payload.organizationId);
+    return apiSuccess({ accounts });
+  } catch (err) {
+    logger.error("Failed to list campaign accounts", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.post("/api/party/campaign-finance", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin") return apiError("Forbidden — admin role required", 403);
+  try {
+    const body = await c.req.json<Partial<PartyCampaignAccount>>();
+    if (!body.positionLevel) return apiError("positionLevel is required");
+    const level = body.positionLevel as CampaignPositionLevel;
+    const limitKobo = body.limitKobo ?? ELECTORAL_ACT_LIMITS_KOBO[level];
+    const account: PartyCampaignAccount = {
+      id: generateId(),
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      electionRef: body.electionRef,
+      candidateId: body.candidateId,
+      positionLevel: level,
+      limitKobo,
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
+    };
+    await createCampaignAccount(c.env.DB, account);
+    await emitEvent(c.env, "party.campaign_account.created", payload.tenantId, {
+      accountId: account.id,
+      positionLevel: level,
+      limitKobo,
+      organizationId: payload.organizationId,
+    });
+    return apiSuccess(account);
+  } catch (err) {
+    logger.error("Failed to create campaign account", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.post("/api/party/campaign-finance/:id/transactions", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "officer") {
+    return apiError("Forbidden — admin or officer role required", 403);
+  }
+  try {
+    const accountId = c.req.param("id");
+    const account = await getCampaignAccountById(c.env.DB, accountId, payload.tenantId);
+    if (!account) return apiError("Campaign account not found", 404);
+
+    const body = await c.req.json<Partial<PartyCampaignTransaction>>();
+    if (!body.transactionType || !["income", "expenditure"].includes(body.transactionType)) {
+      return apiError("transactionType must be 'income' or 'expenditure'");
+    }
+    if (!body.amountKobo || body.amountKobo <= 0) return apiError("amountKobo must be positive");
+    if (!body.category) return apiError("category is required");
+    if (!body.description) return apiError("description is required");
+
+    const tx: PartyCampaignTransaction = {
+      id: generateId(),
+      tenantId: payload.tenantId,
+      organizationId: payload.organizationId,
+      accountId,
+      transactionType: body.transactionType,
+      category: body.category,
+      description: body.description,
+      amountKobo: body.amountKobo,
+      currency: body.currency ?? "NGN",
+      transactionDate: body.transactionDate ?? nowMs(),
+      evidenceUrl: body.evidenceUrl,
+      recordedBy: payload.sub,
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
+    };
+    await addCampaignTransaction(c.env.DB, tx);
+
+    // Check Electoral Act limit warning (>80%)
+    const summary = await getCampaignFinanceSummary(c.env.DB, accountId, payload.tenantId);
+    const spentPercent = account.limitKobo > 0
+      ? (summary.totalExpenditureKobo / account.limitKobo) * 100
+      : 0;
+    const limitWarning = spentPercent >= 80
+      ? { warning: `Electoral Act 2022: ${spentPercent.toFixed(1)}% of spending limit reached`, spentPercent }
+      : null;
+
+    await emitEvent(c.env, "party.campaign_transaction.recorded", payload.tenantId, {
+      transactionId: tx.id,
+      accountId,
+      amountKobo: tx.amountKobo,
+      transactionType: tx.transactionType,
+      limitWarning: limitWarning !== null,
+      organizationId: payload.organizationId,
+    });
+
+    return apiSuccess({ transaction: tx, ...(limitWarning ?? {}) });
+  } catch (err) {
+    logger.error("Failed to record campaign transaction", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
+app.get("/api/party/campaign-finance/:id/summary", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  try {
+    const accountId = c.req.param("id");
+    const account = await getCampaignAccountById(c.env.DB, accountId, payload.tenantId);
+    if (!account) return apiError("Campaign account not found", 404);
+
+    const txType = new URL(c.req.url).searchParams.get("type") as "income" | "expenditure" | undefined;
+    const [summary, transactions] = await Promise.all([
+      getCampaignFinanceSummary(c.env.DB, accountId, payload.tenantId),
+      getCampaignTransactions(c.env.DB, accountId, payload.tenantId, txType),
+    ]);
+
+    const limitKobo = account.limitKobo;
+    const spentPercent = limitKobo > 0 ? (summary.totalExpenditureKobo / limitKobo) * 100 : 0;
+    const withinLimit = summary.totalExpenditureKobo <= limitKobo;
+
+    return apiSuccess({
+      account,
+      summary: {
+        ...summary,
+        limitKobo,
+        remainingKobo: Math.max(0, limitKobo - summary.totalExpenditureKobo),
+        spentPercent: Math.round(spentPercent * 100) / 100,
+        withinElectoralActLimit: withinLimit,
+        warning: spentPercent >= 80 && withinLimit ? `${spentPercent.toFixed(1)}% of Electoral Act limit used` : null,
+      },
+      transactions,
+    });
+  } catch (err) {
+    logger.error("Failed to get campaign summary", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
 });
 
 // ─── Export ───────────────────────────────────────────────────────────────────

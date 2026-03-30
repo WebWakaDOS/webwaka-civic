@@ -47,7 +47,16 @@ import type {
   DonationStatus,
   MaterialStatus,
   ApprovalStatus,
+  ElectionResultCollation,
+  CollationLevel,
 } from "../../../core/db/schema";
+import {
+  createResultCollation,
+  getElectionCollations,
+  certifyCollation,
+  getPublicElectionResults,
+  getPublicCollationBreakdown,
+} from "../../../core/db/queries";
 import type { D1Database } from "../../../core/db/queries";
 
 export interface ElectionsEnv {
@@ -1877,6 +1886,129 @@ app.post("/sync/pull", async (c) => {
   } catch (error) {
     logger.error("Failed to pull sync data", { error: String(error) });
     return c.json({ success: false, error: "Failed to pull sync data" }, 500);
+  }
+});
+
+// ─── T006: EL02 — Multi-Level Result Collation ────────────────────────────────
+
+app.post("/api/elections/results/collate", electionAuthMiddleware, requireAdminOrManager, async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const jwtPayload = (c as unknown as { get: (k: string) => { tenantId: string; sub: string } }).get("electionJwt");
+    const tenantId: string = jwtPayload?.tenantId ?? "";
+    const actorId: string = jwtPayload?.sub ?? "";
+
+    const body = await c.req.json<Partial<ElectionResultCollation>>();
+    if (!body.electionId) return c.json({ success: false, error: "electionId is required" }, 400);
+    if (!body.candidateId) return c.json({ success: false, error: "candidateId is required" }, 400);
+    if (!body.level) return c.json({ success: false, error: "level is required" }, 400);
+
+    const now = Date.now();
+    const row: ElectionResultCollation = {
+      id: uuidv4(),
+      tenantId,
+      electionId: body.electionId,
+      candidateId: body.candidateId,
+      level: body.level as CollationLevel,
+      pollingUnit: body.pollingUnit,
+      ward: body.ward,
+      lga: body.lga,
+      state: body.state,
+      votesCount: body.votesCount ?? 0,
+      spoiltVotes: body.spoiltVotes,
+      accreditedVoters: body.accreditedVoters,
+      collatedBy: actorId,
+      collatedAt: now,
+      status: "draft",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await createResultCollation(env.DB, row);
+    return c.json({ success: true, data: row });
+  } catch (err) {
+    logger.error("Failed to collate result", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+app.get("/api/elections/:id/results/collation", electionAuthMiddleware, async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const jwtPayload = (c as unknown as { get: (k: string) => { tenantId: string } }).get("electionJwt");
+    const tenantId: string = jwtPayload?.tenantId ?? "";
+    const electionId = c.req.param("id");
+    const level = new URL(c.req.url).searchParams.get("level") as CollationLevel | undefined;
+    const collations = await getElectionCollations(env.DB, electionId, tenantId, level);
+
+    // Aggregate totals per candidate
+    const byCandidate: Record<string, number> = {};
+    for (const col of collations) {
+      byCandidate[col.candidateId] = (byCandidate[col.candidateId] ?? 0) + col.votesCount;
+    }
+    const grandTotal = Object.values(byCandidate).reduce((s, v) => s + v, 0);
+    const aggregate = Object.entries(byCandidate).map(([candidateId, votes]) => ({
+      candidateId,
+      votes,
+      percentage: grandTotal > 0 ? Math.round((votes / grandTotal) * 10000) / 100 : 0,
+    })).sort((a, b) => b.votes - a.votes);
+
+    return c.json({ success: true, data: { collations, aggregate } });
+  } catch (err) {
+    logger.error("Failed to get collation", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+app.patch("/api/elections/results/:id/certify", electionAuthMiddleware, requireAdmin, async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const jwtPayload = (c as unknown as { get: (k: string) => { tenantId: string; sub: string } }).get("electionJwt");
+    const tenantId: string = jwtPayload?.tenantId ?? "";
+    const actorId: string = jwtPayload?.sub ?? "";
+
+    const certified = await certifyCollation(env.DB, c.req.param("id"), tenantId, actorId);
+    if (!certified) return c.json({ success: false, error: "Collation not found" }, 404);
+    return c.json({ success: true, data: certified });
+  } catch (err) {
+    logger.error("Failed to certify collation", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+// ─── T007: EL03 — Public Result Portal (IReV-style, no auth required) ────────
+
+app.get("/api/public/elections/:id/results", async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const electionId = c.req.param("id");
+    const results = await getPublicElectionResults(env.DB, electionId);
+    return c.json({ success: true, data: { electionId, results, publishedAt: new Date().toISOString() } });
+  } catch (err) {
+    logger.error("Public results failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
+  }
+});
+
+app.get("/api/public/elections/:id/results/breakdown", async (c) => {
+  try {
+    const env = c.env as ElectionsEnv;
+    const electionId = c.req.param("id");
+    const level = new URL(c.req.url).searchParams.get("level") as CollationLevel | undefined;
+
+    // Get certified collations (public — no tenant filter)
+    const collations = await getPublicCollationBreakdown(env.DB, electionId, level);
+
+    const byCandidate: Record<string, { [loc: string]: number }> = {};
+    for (const col of collations) {
+      if (!byCandidate[col.candidateId]) byCandidate[col.candidateId] = {};
+      const location = col.ward ?? col.lga ?? col.state ?? col.pollingUnit ?? "national";
+      byCandidate[col.candidateId][location] = (byCandidate[col.candidateId][location] ?? 0) + col.votesCount;
+    }
+
+    return c.json({ success: true, data: { electionId, level: level ?? "all", breakdown: byCandidate } });
+  } catch (err) {
+    logger.error("Public breakdown failed", { error: String(err) });
+    return c.json({ success: false, error: "Internal server error" }, 500);
   }
 });
 

@@ -38,6 +38,68 @@ migrations/             # D1 SQL migrations
 public/                 # Static assets, PWA manifest, service worker
 ```
 
+## Phase 2 — Core Platform Gaps — COMPLETED (Weeks 9–14)
+
+### T001: E03 — NotificationService wired into Church-NGO
+- **Member registration** → `member.welcome` WhatsApp/email via `NotificationService.sendWelcome()`
+- **Donation recorded** → `donation.receipt` notification (phone=WhatsApp, email fallback)
+- **Event created** → `event.upcoming` broadcast notification
+- **Pledge fulfilled** → `pledge.fulfilled` thank-you notification
+- All calls fire-and-forget (`.catch()` logged, never blocks response)
+
+### T002: E13 — Bulk Member Import
+- `POST /api/civic/members/import` — accepts `Content-Type: text/csv` or JSON `{ rows: [...] }`
+- Validates firstName, lastName, phone per row; max 200 rows per batch
+- Batch INSERT, emits `civic.member.registered` + welcome notification per member
+- Returns `{ imported, failed, errors: [{row, reason}] }`
+
+### T003: P03 — INEC Membership Register Export
+- `GET /api/party/members/export?format=csv|json` — admin-only
+- CSV columns: membershipNumber, firstName, lastName, phone, state, lga, ward, structureId, memberStatus
+- Returns `Content-Disposition: attachment; filename="inec-register-{orgId}-{date}.csv"`
+
+### T004: P05 — Candidate Vetting & Nomination Workflow
+- Schema: `party_nominations` table in `PARTY_MIGRATION_SQL`
+- `GET/POST /api/party/nominations`, `PATCH …/:id/approve|reject|submit`
+- On approve: emits `candidate.nominated` (CIV-2→CIV-3 bridge event)
+- TypeScript: `PartyNomination`, `NominationStatus`; query helpers in `queries.ts`
+
+### T005: P06 — Campaign Finance Tracker (Electoral Act 2022)
+- Schema: `party_campaign_accounts` + `party_campaign_transactions` tables
+- `ELECTORAL_ACT_LIMITS_KOBO` constants (presidential→₦5B, governorship→₦1B, senate→₦100M …)
+- `GET/POST /api/party/campaign-finance`, `POST …/:id/transactions`, `GET …/:id/summary`
+- Warning emitted when expenditure exceeds 80% of Electoral Act limit
+
+### T006: EL02 — Multi-Level Result Collation
+- Schema: `election_result_collations` table in `ELECTION_MIGRATION_SQL`
+- Collation levels: polling_unit / ward / lga / state / senatorial / federal_constituency / national
+- `POST /api/elections/results/collate`, `GET /api/elections/:id/results/collation?level=`, `PATCH …/results/:id/certify`
+- Aggregate view per candidate with vote totals and percentage
+
+### T007: EL03 — Public Result Portal (IReV-style)
+- No JWT required — public endpoints
+- `GET /api/public/elections/:id/results` — certified results with percentage
+- `GET /api/public/elections/:id/results/breakdown?level=ward|lga|state` — geographic breakdown by candidate
+
+---
+
+## Phase 1 — CIV-1 & CIV-2 Features — COMPLETED
+
+### T010–T011: Departments + Expenses/Budgets (CIV-1)
+- `civic_departments`, `civic_expenses`, `civic_budgets` tables + full CRUD API
+- `CivicExpenseCategory` / `CivicExpenseStatus` (renamed to avoid CIV-3 conflict)
+
+### T012: PaymentService wired into donations + pledges (CIV-1)
+- `POST /api/civic/donations` → Paystack initializePayment for paystack method
+- `POST /api/civic/pledges/:id/payment?via=paystack`
+- `POST /webhooks/paystack` HMAC-SHA512 verified, outside JWT scope
+
+### T013: Party ID Card document generation (CIV-2)
+- `createPartyIdCard()` emits `document.generation.requested`
+- `POST /api/party/id-cards/:id/regenerate`
+
+---
+
 ## Phase 0 Infrastructure — COMPLETED
 
 ### Shared Auth (`src/core/auth.ts`)

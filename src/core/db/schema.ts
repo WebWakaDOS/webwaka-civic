@@ -816,6 +816,81 @@ export interface PartyIdCard {
   deletedAt?: number;
 }
 
+// ─── CIV-2 Phase 2 Interfaces ────────────────────────────────────────────────
+
+export type NominationStatus = "pending" | "approved" | "rejected" | "submitted";
+
+export interface PartyNomination {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  memberId: string;
+  position: string;
+  constituency: string;
+  electionRef?: string;
+  status: NominationStatus;
+  nominatorId: string;
+  vettedBy?: string;
+  vettingNotes?: string;
+  nominatedAt: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export type CampaignPositionLevel =
+  | "presidential"
+  | "governorship"
+  | "senate"
+  | "house_of_representatives"
+  | "state_assembly"
+  | "lga_chairmanship"
+  | "councillor";
+
+export type CampaignTransactionType = "income" | "expenditure";
+
+/** Nigerian Electoral Act 2022 spending limits in kobo */
+export const ELECTORAL_ACT_LIMITS_KOBO: Record<CampaignPositionLevel, number> = {
+  presidential: 500_000_000_00,
+  governorship: 100_000_000_00,
+  senate: 10_000_000_00,
+  house_of_representatives: 7_000_000_00,
+  state_assembly: 3_000_000_00,
+  lga_chairmanship: 3_000_000_00,
+  councillor: 3_000_000_00,
+};
+
+export interface PartyCampaignAccount {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  electionRef?: string;
+  candidateId?: string;
+  positionLevel: CampaignPositionLevel;
+  limitKobo: number;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface PartyCampaignTransaction {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  accountId: string;
+  transactionType: CampaignTransactionType;
+  category: string;
+  description: string;
+  amountKobo: number;
+  currency: string;
+  transactionDate: number;
+  evidenceUrl?: string;
+  recordedBy: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
 // ─── CIV-2 D1 Migration SQL ───────────────────────────────────────────────────
 
 export const PARTY_MIGRATION_SQL = `
@@ -992,6 +1067,67 @@ CREATE TABLE IF NOT EXISTS party_id_cards (
 CREATE INDEX IF NOT EXISTS idx_party_cards_tenant ON party_id_cards(tenantId, organizationId);
 CREATE INDEX IF NOT EXISTS idx_party_cards_member ON party_id_cards(memberId);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_party_cards_number ON party_id_cards(tenantId, cardNumber) WHERE deletedAt IS NULL;
+
+-- 9. party_nominations (P05 — Candidate Vetting & Nomination Workflow)
+CREATE TABLE IF NOT EXISTS party_nominations (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  memberId TEXT NOT NULL,
+  position TEXT NOT NULL,
+  constituency TEXT NOT NULL,
+  electionRef TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  nominatorId TEXT NOT NULL,
+  vettedBy TEXT,
+  vettingNotes TEXT,
+  nominatedAt INTEGER NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER,
+  FOREIGN KEY (memberId) REFERENCES party_members(id)
+);
+CREATE INDEX IF NOT EXISTS idx_party_nominations_tenant ON party_nominations(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_nominations_member ON party_nominations(memberId);
+CREATE INDEX IF NOT EXISTS idx_party_nominations_status ON party_nominations(status);
+
+-- 10. party_campaign_accounts (P06 — Campaign Finance Tracker)
+CREATE TABLE IF NOT EXISTS party_campaign_accounts (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  electionRef TEXT,
+  candidateId TEXT,
+  positionLevel TEXT NOT NULL,
+  limitKobo INTEGER NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_party_campaign_accounts_tenant ON party_campaign_accounts(tenantId, organizationId);
+
+-- 11. party_campaign_transactions (P06)
+CREATE TABLE IF NOT EXISTS party_campaign_transactions (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  accountId TEXT NOT NULL,
+  transactionType TEXT NOT NULL,
+  category TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amountKobo INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  transactionDate INTEGER NOT NULL,
+  evidenceUrl TEXT,
+  recordedBy TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER,
+  FOREIGN KEY (accountId) REFERENCES party_campaign_accounts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_party_campaign_tx_tenant ON party_campaign_transactions(tenantId, organizationId);
+CREATE INDEX IF NOT EXISTS idx_party_campaign_tx_account ON party_campaign_transactions(accountId);
+CREATE INDEX IF NOT EXISTS idx_party_campaign_tx_type ON party_campaign_transactions(transactionType);
 `;
 
 
@@ -1281,3 +1417,65 @@ export interface ElectionAuditLog {
   ipAddress?: string;
   createdAt: number;
 }
+
+// ─── CIV-3 Phase 2 Interfaces ────────────────────────────────────────────────
+
+export type CollationLevel = "polling_unit" | "ward" | "lga" | "state" | "senatorial" | "federal_constituency" | "national";
+
+export type CollationStatus = "draft" | "submitted" | "certified";
+
+/** EL02 — Multi-Level Result Collation [Phase 2] */
+export interface ElectionResultCollation {
+  id: string;
+  tenantId: string;
+  electionId: string;
+  candidateId: string;
+  level: CollationLevel;
+  pollingUnit?: string;
+  ward?: string;
+  lga?: string;
+  state?: string;
+  votesCount: number;
+  spoiltVotes?: number;
+  accreditedVoters?: number;
+  collatedBy: string;
+  collatedAt: number;
+  status: CollationStatus;
+  certifiedBy?: string;
+  certifiedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ─── CIV-3 D1 Migration SQL ───────────────────────────────────────────────────
+
+export const ELECTION_MIGRATION_SQL = `
+-- WebWaka Civic -- CIV-3 Elections D1 Migration
+-- Phase 2: EL02 Multi-Level Result Collation
+
+-- election_result_collations
+CREATE TABLE IF NOT EXISTS election_result_collations (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  electionId TEXT NOT NULL,
+  candidateId TEXT NOT NULL,
+  level TEXT NOT NULL,
+  pollingUnit TEXT,
+  ward TEXT,
+  lga TEXT,
+  state TEXT,
+  votesCount INTEGER NOT NULL DEFAULT 0,
+  spoiltVotes INTEGER,
+  accreditedVoters INTEGER,
+  collatedBy TEXT NOT NULL,
+  collatedAt INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  certifiedBy TEXT,
+  certifiedAt INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_collations_tenant ON election_result_collations(tenantId, electionId);
+CREATE INDEX IF NOT EXISTS idx_collations_candidate ON election_result_collations(candidateId);
+CREATE INDEX IF NOT EXISTS idx_collations_level ON election_result_collations(level, status);
+`;
