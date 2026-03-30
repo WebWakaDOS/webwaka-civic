@@ -305,6 +305,54 @@ CREATE TABLE IF NOT EXISTS civic_announcements (
 );
 CREATE INDEX IF NOT EXISTS idx_civic_announcements_tenant ON civic_announcements(tenantId);
 CREATE INDEX IF NOT EXISTS idx_civic_announcements_org ON civic_announcements(organizationId);
+
+-- 10. civic_expenses
+CREATE TABLE IF NOT EXISTS civic_expenses (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  departmentId TEXT,
+  category TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amountKobo INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  expenseDate INTEGER NOT NULL,
+  receiptUrl TEXT,
+  recordedBy TEXT NOT NULL,
+  approvedBy TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  deletedAt INTEGER,
+  FOREIGN KEY (organizationId) REFERENCES civic_organizations(id),
+  FOREIGN KEY (departmentId) REFERENCES civic_departments(id)
+);
+CREATE INDEX IF NOT EXISTS idx_civic_expenses_tenant ON civic_expenses(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civic_expenses_org ON civic_expenses(organizationId);
+CREATE INDEX IF NOT EXISTS idx_civic_expenses_status ON civic_expenses(status);
+CREATE INDEX IF NOT EXISTS idx_civic_expenses_date ON civic_expenses(expenseDate);
+
+-- 11. civic_budgets
+CREATE TABLE IF NOT EXISTS civic_budgets (
+  id TEXT PRIMARY KEY,
+  tenantId TEXT NOT NULL,
+  organizationId TEXT NOT NULL,
+  departmentId TEXT,
+  year INTEGER NOT NULL,
+  month INTEGER,
+  category TEXT NOT NULL,
+  amountKobo INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'NGN',
+  notes TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  FOREIGN KEY (organizationId) REFERENCES civic_organizations(id),
+  FOREIGN KEY (departmentId) REFERENCES civic_departments(id)
+);
+CREATE INDEX IF NOT EXISTS idx_civic_budgets_tenant ON civic_budgets(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civic_budgets_org ON civic_budgets(organizationId);
+CREATE INDEX IF NOT EXISTS idx_civic_budgets_year ON civic_budgets(year);
 `;
 
 // ─── TypeScript Interfaces ────────────────────────────────────────────────────
@@ -488,6 +536,54 @@ export interface CivicAnnouncement {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+}
+
+export type CivicExpenseStatus = "pending" | "approved" | "rejected";
+
+export type CivicExpenseCategory =
+  | "operations"
+  | "personnel"
+  | "utilities"
+  | "outreach"
+  | "welfare"
+  | "maintenance"
+  | "equipment"
+  | "travel"
+  | "other";
+
+export interface CivicExpense {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  departmentId?: string;
+  category: CivicExpenseCategory | string;
+  description: string;
+  amountKobo: number;
+  currency: string;
+  expenseDate: number;
+  receiptUrl?: string;
+  recordedBy: string;
+  approvedBy?: string;
+  status: CivicExpenseStatus;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export interface CivicBudget {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  departmentId?: string;
+  year: number;
+  month?: number;
+  category: CivicExpenseCategory | string;
+  amountKobo: number;
+  currency: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

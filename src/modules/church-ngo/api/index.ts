@@ -15,18 +15,43 @@ import { emitEvent } from "@webwaka/core";
 import { createEventBus, type EventBusEnv } from "../../../core/event-bus/index";
 import { createLogger } from "../../../core/logger";
 import {
+  createCivicAuthMiddleware,
+  CIVIC_JWT_KEY,
+  type CivicJWTPayload,
+} from "../../../core/auth";
+import {
+  apiSuccess,
+  apiError,
+  koboToNaira,
+  generateId,
+  nowMs,
+} from "../../../core/response";
+import { createDocumentService } from "../../../core/services/documents";
+import {
+  createPaymentService,
+  verifyPaystackWebhook,
+  type PaystackWebhookBody,
+} from "../../../core/services/payments";
+import {
+  createBudget,
+  createDepartment,
   createDonation,
   createEvent,
+  createExpense,
   createGrant,
   createMember,
   createPledge,
   disburseGrant,
   getAnnouncementsByOrg,
   getAttendanceByEvent,
+  getBudgetsByOrg,
   getDashboardSummary,
+  getDepartmentById,
+  getDepartmentsByOrg,
   getDonationSummary,
   getDonationsByOrg,
   getEventsByOrg,
+  getExpensesByOrg,
   getGrantsByOrg,
   getMemberById,
   getMemberCount,
@@ -34,17 +59,25 @@ import {
   getOrganizationByTenant,
   getPledgesByOrg,
   getTotalDonationsKobo,
+  getTotalExpensesKobo,
   recordAttendance,
   recordPledgePayment,
+  softDeleteDepartment,
+  softDeleteExpense,
   softDeleteMember,
+  updateDepartment,
+  updateExpenseStatus,
   updateMember,
   updateOrganization,
   type D1Database,
 } from "../../../core/db/queries";
 import type {
   CivicAttendance,
+  CivicBudget,
+  CivicDepartment,
   CivicDonation,
   CivicEvent,
+  CivicExpense,
   CivicGrant,
   CivicMember,
   CivicPledge,
@@ -57,83 +90,7 @@ interface Env extends EventBusEnv {
   DB: D1Database;
   STORAGE: R2Bucket;
   JWT_SECRET: string;
-}
-
-// ─── JWT Payload ──────────────────────────────────────────────────────────────
-
-interface JWTPayload {
-  sub: string;
-  tenantId: string;
-  organizationId: string;
-  role: "admin" | "leader" | "member" | "viewer";
-  name: string;
-  exp: number;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function generateId(): string {
-  return crypto.randomUUID();
-}
-
-function now(): number {
-  return Date.now();
-}
-
-function koboToNaira(kobo: number): string {
-  return new Intl.NumberFormat("en-NG", {
-    style: "currency",
-    currency: "NGN",
-    minimumFractionDigits: 2,
-  }).format(kobo / 100);
-}
-
-function apiSuccess<T>(data: T): Response {
-  return new Response(JSON.stringify({ success: true, data }), {
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function apiError(message: string, status = 400): Response {
-  return new Response(JSON.stringify({ success: false, error: message }), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-// ─── Edge JWT Validation ──────────────────────────────────────────────────────
-
-async function verifyJWT(token: string, secret: string): Promise<JWTPayload | null> {
-  try {
-    const [headerB64, payloadB64, signatureB64] = token.split(".");
-    if (!headerB64 || !payloadB64 || !signatureB64) return null;
-
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyData,
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"]
-    );
-
-    const data = encoder.encode(`${headerB64}.${payloadB64}`);
-    const signature = Uint8Array.from(
-      atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")),
-      (c) => c.charCodeAt(0)
-    );
-
-    const valid = await crypto.subtle.verify("HMAC", key, signature, data);
-    if (!valid) return null;
-
-    const payload = JSON.parse(atob(payloadB64)) as JWTPayload;
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-
-    return payload;
-  } catch {
-    return null;
-  }
+  PAYSTACK_SECRET: string;
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -142,26 +99,68 @@ const app = new Hono<{ Bindings: Env }>();
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
-app.use("/api/civic/*", async (c, next) => {
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return apiError("Unauthorized — missing token", 401);
-  }
-
-  const token = authHeader.slice(7);
-  const payload = await verifyJWT(token, c.env.JWT_SECRET);
-  if (payload === null) {
-    return apiError("Unauthorized — invalid or expired token", 401);
-  }
-
-  c.set("jwtPayload" as never, payload);
-  return next();
-});
+app.use("/api/civic/*", createCivicAuthMiddleware<CivicJWTPayload>());
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 
 app.get("/health", (c) => {
   return c.json({ status: "ok", service: "webwaka-civic", timestamp: new Date().toISOString() });
+});
+
+// ─── Paystack Webhook ─────────────────────────────────────────────────────────
+// POST /webhooks/paystack — outside /api/civic/* auth scope; Paystack calls this.
+// HMAC-SHA512 signature verification replaces JWT auth for this endpoint.
+
+app.post("/webhooks/paystack", async (c) => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header("x-paystack-signature") ?? "";
+
+  const valid = await verifyPaystackWebhook(rawBody, signature, c.env.PAYSTACK_SECRET ?? "");
+  if (!valid) {
+    logger.warn("Paystack webhook signature invalid");
+    return new Response(JSON.stringify({ error: "Invalid signature" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  let body: PaystackWebhookBody;
+  try {
+    body = JSON.parse(rawBody) as PaystackWebhookBody;
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const referenceId = body.data.reference;
+  const tenantId = (body.data.metadata?.tenantId as string) ?? "platform";
+
+  if (body.data.status === "success") {
+    await c.env.DB.prepare(
+      "UPDATE civic_donations SET paymentReference = ?, updatedAt = ? WHERE id = ? AND deletedAt IS NULL"
+    ).bind(referenceId, nowMs(), referenceId).run();
+
+    await emitEvent(c.env, "payment.verified", tenantId, {
+      reference: referenceId,
+      amountKobo: body.data.amount,
+      paidAt: body.data.paid_at,
+      channel: body.data.channel,
+      metadata: body.data.metadata,
+    });
+  } else {
+    await emitEvent(c.env, "payment.failed", tenantId, {
+      reference: referenceId,
+      status: body.data.status,
+      metadata: body.data.metadata,
+    });
+  }
+
+  logger.info("Paystack webhook processed", { event: body.event, reference: referenceId, status: body.data.status });
+  return new Response(JSON.stringify({ received: true }), {
+    headers: { "Content-Type": "application/json" },
+  });
 });
 
 // ─── DB Migration ─────────────────────────────────────────────────────────────
@@ -181,7 +180,7 @@ app.post("/api/civic/migrate", async (c) => {
 // ─── Organization ─────────────────────────────────────────────────────────────
 
 app.get("/api/civic/organization", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("organization", payload.tenantId);
 
   try {
@@ -195,7 +194,7 @@ app.get("/api/civic/organization", async (c) => {
 });
 
 app.patch("/api/civic/organization", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("organization", payload.tenantId);
 
   if (payload.role !== "admin") {
@@ -219,7 +218,7 @@ app.patch("/api/civic/organization", async (c) => {
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/dashboard", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("dashboard", payload.tenantId);
 
   try {
@@ -239,10 +238,81 @@ app.get("/api/civic/dashboard", async (c) => {
   }
 });
 
+// ─── Departments ──────────────────────────────────────────────────────────────
+
+app.get("/api/civic/departments", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const departments = await getDepartmentsByOrg(
+    c.env.DB,
+    payload.tenantId,
+    payload.organizationId
+  );
+  return apiSuccess(departments);
+});
+
+app.post("/api/civic/departments", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "leader") {
+    return apiError("Forbidden — admin or leader only", 403);
+  }
+  const body = await c.req.json<Omit<CivicDepartment, "id" | "tenantId" | "organizationId" | "createdAt" | "updatedAt">>();
+  if (!body.name) {
+    return apiError("name is required");
+  }
+  const dept: CivicDepartment = {
+    id: generateId(),
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    name: body.name,
+    description: body.description,
+    leaderId: body.leaderId,
+    createdAt: nowMs(),
+    updatedAt: nowMs(),
+  };
+  await createDepartment(c.env.DB, dept);
+  await emitEvent(c.env, "civic.member.created", payload.tenantId, {
+    organizationId: payload.organizationId,
+    entityType: "department",
+    departmentId: dept.id,
+    name: dept.name,
+  });
+  logger.info("Civic department created", { id: dept.id, name: dept.name, tenantId: payload.tenantId });
+  return apiSuccess(dept);
+});
+
+app.patch("/api/civic/departments/:id", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "leader") {
+    return apiError("Forbidden — admin or leader only", 403);
+  }
+  const id = c.req.param("id");
+  const existing = await getDepartmentById(c.env.DB, id, payload.tenantId);
+  if (!existing) {
+    return apiError("Department not found", 404);
+  }
+  const body = await c.req.json<Partial<Pick<CivicDepartment, "name" | "description" | "leaderId">>>();
+  await updateDepartment(c.env.DB, id, payload.tenantId, body);
+  return apiSuccess({ updated: true });
+});
+
+app.delete("/api/civic/departments/:id", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  if (payload.role !== "admin") {
+    return apiError("Forbidden — admin only", 403);
+  }
+  const id = c.req.param("id");
+  const existing = await getDepartmentById(c.env.DB, id, payload.tenantId);
+  if (!existing) {
+    return apiError("Department not found", 404);
+  }
+  await softDeleteDepartment(c.env.DB, id, payload.tenantId);
+  return apiSuccess({ deleted: true });
+});
+
 // ─── Members ──────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/members", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("members", payload.tenantId);
 
   try {
@@ -272,7 +342,7 @@ app.get("/api/civic/members", async (c) => {
 });
 
 app.get("/api/civic/members/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("members", payload.tenantId);
 
   try {
@@ -286,7 +356,7 @@ app.get("/api/civic/members/:id", async (c) => {
 });
 
 app.post("/api/civic/members", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("members", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -324,14 +394,14 @@ app.post("/api/civic/members", async (c) => {
       departmentId: body.departmentId,
       memberStatus: body.memberStatus ?? "active",
       discipleshipLevel: body.discipleshipLevel ?? "new_convert",
-      joinedAt: body.joinedAt ?? now(),
+      joinedAt: body.joinedAt ?? nowMs(),
       baptismDate: body.baptismDate,
       ndprConsent: body.ndprConsent ?? 0,
       ndprConsentDate: body.ndprConsentDate,
       photoUrl: body.photoUrl,
       notes: body.notes,
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
     };
 
     await createMember(c.env.DB, member);
@@ -351,7 +421,7 @@ app.post("/api/civic/members", async (c) => {
 });
 
 app.patch("/api/civic/members/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("members", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -376,7 +446,7 @@ app.patch("/api/civic/members/:id", async (c) => {
 });
 
 app.delete("/api/civic/members/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("members", payload.tenantId);
 
   if (payload.role !== "admin") {
@@ -402,7 +472,7 @@ app.delete("/api/civic/members/:id", async (c) => {
 // ─── Donations ────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/donations", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("donations", payload.tenantId);
 
   try {
@@ -440,17 +510,17 @@ app.get("/api/civic/donations", async (c) => {
 });
 
 app.get("/api/civic/donations/summary", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("donations", payload.tenantId);
 
   try {
     const url = new URL(c.req.url);
     const startDate = url.searchParams.get("startDate")
       ? Number(url.searchParams.get("startDate"))
-      : now() - 30 * 24 * 60 * 60 * 1000; // default: last 30 days
+      : nowMs() - 30 * 24 * 60 * 60 * 1000; // default: last 30 days
     const endDate = url.searchParams.get("endDate")
       ? Number(url.searchParams.get("endDate"))
-      : now();
+      : nowMs();
 
     const summary = await getDonationSummary(
       c.env.DB,
@@ -468,7 +538,7 @@ app.get("/api/civic/donations/summary", async (c) => {
 });
 
 app.post("/api/civic/donations", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("donations", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -499,9 +569,9 @@ app.post("/api/civic/donations", async (c) => {
       paymentReference: body.paymentReference,
       eventId: body.eventId,
       recordedBy: payload.sub,
-      donationDate: body.donationDate ?? now(),
-      createdAt: now(),
-      updatedAt: now(),
+      donationDate: body.donationDate ?? nowMs(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
     };
 
     await createDonation(c.env.DB, donation);
@@ -514,6 +584,24 @@ app.post("/api/civic/donations", async (c) => {
       memberId: donation.memberId,
     } });
 
+    if (donation.paymentMethod === "paystack" && body.customerEmail) {
+      const paySvc = createPaymentService(c.env);
+      await paySvc.initializePayment({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        amountKobo: donation.amountKobo,
+        customerEmail: body.customerEmail as string,
+        customerPhone: body.customerPhone as string | undefined,
+        category: "donation",
+        referenceId: donation.id,
+        metadata: {
+          donationType: donation.donationType,
+          memberId: donation.memberId,
+          receiptNumber: donation.receiptNumber,
+        },
+      });
+    }
+
     logger.info("Donation recorded", { donationId: donation.id, amountKobo: donation.amountKobo });
     return apiSuccess(donation);
   } catch (err) {
@@ -525,7 +613,7 @@ app.post("/api/civic/donations", async (c) => {
 // ─── Pledges ──────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/pledges", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("pledges", payload.tenantId);
 
   try {
@@ -545,7 +633,7 @@ app.get("/api/civic/pledges", async (c) => {
 });
 
 app.post("/api/civic/pledges", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("pledges", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -571,10 +659,10 @@ app.post("/api/civic/pledges", async (c) => {
       paidAmountKobo: 0,
       currency: body.currency ?? "NGN",
       pledgeStatus: "active",
-      pledgeDate: body.pledgeDate ?? now(),
+      pledgeDate: body.pledgeDate ?? nowMs(),
       dueDate: body.dueDate,
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
     };
 
     await createPledge(c.env.DB, pledge);
@@ -595,7 +683,7 @@ app.post("/api/civic/pledges", async (c) => {
 });
 
 app.post("/api/civic/pledges/:id/payment", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("pledges", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -603,7 +691,7 @@ app.post("/api/civic/pledges/:id/payment", async (c) => {
   }
 
   try {
-    const body = await c.req.json<{ amountKobo: number }>();
+    const body = await c.req.json<{ amountKobo: number; customerEmail?: string; via?: "cash" | "paystack" }>();
 
     if (!body.amountKobo || body.amountKobo <= 0) {
       return apiError("amountKobo must be a positive integer");
@@ -631,6 +719,19 @@ app.post("/api/civic/pledges/:id/payment", async (c) => {
       totalAmountKobo: updatedPledge.totalAmountKobo,
     } });
 
+    if (body.via === "paystack" && body.customerEmail) {
+      const paySvc = createPaymentService(c.env);
+      await paySvc.initializePayment({
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        amountKobo: body.amountKobo,
+        customerEmail: body.customerEmail,
+        category: "pledge_payment",
+        referenceId: `pledge-${updatedPledge.id}-${nowMs()}`,
+        metadata: { pledgeId: updatedPledge.id },
+      });
+    }
+
     logger.info("Pledge payment recorded", {
       pledgeId: c.req.param("id"),
       amountKobo: body.amountKobo,
@@ -645,7 +746,7 @@ app.post("/api/civic/pledges/:id/payment", async (c) => {
 // ─── Events ───────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/events", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("events", payload.tenantId);
 
   try {
@@ -668,7 +769,7 @@ app.get("/api/civic/events", async (c) => {
 });
 
 app.post("/api/civic/events", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("events", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -696,8 +797,8 @@ app.post("/api/civic/events", async (c) => {
       currency: body.currency ?? "NGN",
       notes: body.notes,
       createdBy: payload.sub,
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
     };
 
     await createEvent(c.env.DB, event);
@@ -719,7 +820,7 @@ app.post("/api/civic/events", async (c) => {
 });
 
 app.post("/api/civic/events/:id/attendance", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("attendance", payload.tenantId);
 
   if (payload.role !== "admin" && payload.role !== "leader") {
@@ -740,10 +841,10 @@ app.post("/api/civic/events/:id/attendance", async (c) => {
       eventId: c.req.param("id"),
       memberId: body.memberId,
       guestName: body.guestName,
-      checkedInAt: now(),
+      checkedInAt: nowMs(),
       checkedInBy: payload.sub,
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
     };
 
     await recordAttendance(c.env.DB, attendance);
@@ -769,7 +870,7 @@ app.post("/api/civic/events/:id/attendance", async (c) => {
 });
 
 app.get("/api/civic/events/:id/attendance", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("attendance", payload.tenantId);
 
   try {
@@ -788,7 +889,7 @@ app.get("/api/civic/events/:id/attendance", async (c) => {
 // ─── Grants ───────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/grants", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("grants", payload.tenantId);
 
   if (payload.role !== "admin") {
@@ -805,7 +906,7 @@ app.get("/api/civic/grants", async (c) => {
 });
 
 app.post("/api/civic/grants", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("grants", payload.tenantId);
 
   if (payload.role !== "admin") {
@@ -835,8 +936,8 @@ app.post("/api/civic/grants", async (c) => {
       grantStatus: "draft",
       applicationDate: body.applicationDate,
       createdBy: payload.sub,
-      createdAt: now(),
-      updatedAt: now(),
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
     };
 
     await createGrant(c.env.DB, grant);
@@ -849,7 +950,7 @@ app.post("/api/civic/grants", async (c) => {
 });
 
 app.post("/api/civic/grants/:id/disburse", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("grants", payload.tenantId);
 
   if (payload.role !== "admin") {
@@ -879,10 +980,150 @@ app.post("/api/civic/grants/:id/disburse", async (c) => {
   }
 });
 
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+
+app.get("/api/civic/expenses", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const q = c.req.query;
+  const expenses = await getExpensesByOrg(
+    c.env.DB,
+    payload.tenantId,
+    payload.organizationId,
+    {
+      departmentId: q("departmentId") ?? undefined,
+      status: (q("status") as CivicExpenseStatus) ?? undefined,
+      category: q("category") ?? undefined,
+      fromDate: q("fromDate") ? parseInt(q("fromDate")!, 10) : undefined,
+      toDate: q("toDate") ? parseInt(q("toDate")!, 10) : undefined,
+    },
+    q("limit") ? parseInt(q("limit")!, 10) : 50,
+    q("offset") ? parseInt(q("offset")!, 10) : 0
+  );
+  return apiSuccess(expenses);
+});
+
+app.post("/api/civic/expenses", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const body = await c.req.json<Omit<CivicExpense, "id" | "tenantId" | "organizationId" | "createdAt" | "updatedAt">>();
+  if (!body.category || !body.description || !body.amountKobo || !body.expenseDate) {
+    return apiError("category, description, amountKobo, and expenseDate are required");
+  }
+  if (body.amountKobo <= 0) {
+    return apiError("amountKobo must be a positive integer");
+  }
+  const expense: CivicExpense = {
+    id: generateId(),
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    departmentId: body.departmentId,
+    category: body.category,
+    description: body.description,
+    amountKobo: body.amountKobo,
+    currency: body.currency ?? "NGN",
+    expenseDate: body.expenseDate,
+    receiptUrl: body.receiptUrl,
+    recordedBy: payload.sub,
+    status: "pending",
+    notes: body.notes,
+    createdAt: nowMs(),
+    updatedAt: nowMs(),
+  };
+  await createExpense(c.env.DB, expense);
+  await emitEvent(c.env, "expense.recorded", payload.tenantId, {
+    organizationId: payload.organizationId,
+    expenseId: expense.id,
+    amountKobo: expense.amountKobo,
+    category: expense.category,
+  });
+  logger.info("Expense recorded", { id: expense.id, amountKobo: expense.amountKobo, tenantId: payload.tenantId });
+  return apiSuccess(expense);
+});
+
+app.patch("/api/civic/expenses/:id/status", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "leader") {
+    return apiError("Forbidden — admin or leader only", 403);
+  }
+  const id = c.req.param("id");
+  const body = await c.req.json<{ status: "approved" | "rejected" }>();
+  if (!body.status || !["approved", "rejected"].includes(body.status)) {
+    return apiError("status must be 'approved' or 'rejected'");
+  }
+  await updateExpenseStatus(c.env.DB, id, payload.tenantId, body.status, payload.sub);
+  await emitEvent(c.env, "expense.approved", payload.tenantId, {
+    organizationId: payload.organizationId,
+    expenseId: id,
+    status: body.status,
+    approvedBy: payload.sub,
+  });
+  return apiSuccess({ updated: true });
+});
+
+app.delete("/api/civic/expenses/:id", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  if (payload.role !== "admin") {
+    return apiError("Forbidden — admin only", 403);
+  }
+  const id = c.req.param("id");
+  await softDeleteExpense(c.env.DB, id, payload.tenantId);
+  return apiSuccess({ deleted: true });
+});
+
+app.get("/api/civic/expenses/summary", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const year = c.req.query("year") ? parseInt(c.req.query("year")!, 10) : new Date().getFullYear();
+  const totalKobo = await getTotalExpensesKobo(c.env.DB, payload.tenantId, payload.organizationId, year);
+  return apiSuccess({
+    year,
+    totalApprovedKobo: totalKobo,
+    totalApprovedFormatted: koboToNaira(totalKobo),
+  });
+});
+
+// ─── Budgets ──────────────────────────────────────────────────────────────────
+
+app.get("/api/civic/budgets", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const year = c.req.query("year") ? parseInt(c.req.query("year")!, 10) : undefined;
+  const budgets = await getBudgetsByOrg(c.env.DB, payload.tenantId, payload.organizationId, year);
+  return apiSuccess(budgets);
+});
+
+app.post("/api/civic/budgets", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "leader") {
+    return apiError("Forbidden — admin or leader only", 403);
+  }
+  const body = await c.req.json<Omit<CivicBudget, "id" | "tenantId" | "organizationId" | "createdAt" | "updatedAt">>();
+  if (!body.year || !body.category || !body.amountKobo) {
+    return apiError("year, category, and amountKobo are required");
+  }
+  if (body.amountKobo <= 0) {
+    return apiError("amountKobo must be a positive integer");
+  }
+  const budget: CivicBudget = {
+    id: generateId(),
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    departmentId: body.departmentId,
+    year: body.year,
+    month: body.month,
+    category: body.category,
+    amountKobo: body.amountKobo,
+    currency: body.currency ?? "NGN",
+    notes: body.notes,
+    createdAt: nowMs(),
+    updatedAt: nowMs(),
+  };
+  await createBudget(c.env.DB, budget);
+  logger.info("Budget entry created", { id: budget.id, year: budget.year, category: budget.category, tenantId: payload.tenantId });
+  return apiSuccess(budget);
+});
+
 // ─── Announcements ────────────────────────────────────────────────────────────
 
 app.get("/api/civic/announcements", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("announcements", payload.tenantId);
 
   try {
@@ -901,7 +1142,7 @@ app.get("/api/civic/announcements", async (c) => {
 // ─── CORE-1 Sync Endpoint ─────────────────────────────────────────────────────
 
 app.post("/api/civic/sync", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
   const logger = createLogger("sync", payload.tenantId);
 
   try {

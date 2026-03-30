@@ -17,8 +17,15 @@ src/
   worker.ts             # Cloudflare Worker entry point
   components/           # Shared React components
   core/
+    auth.ts             # Shared JWT verification + auth middleware (CIVIC_JWT_KEY)
+    response.ts         # Shared response helpers (apiSuccess, apiError, apiPaginated, koboToNaira, generateId, nowMs)
+    rbac.ts             # RBAC middleware (electionAuthMiddleware, requireElectionRole, requireAdmin)
     db/                 # Database queries and schema
-    event-bus/          # Platform event bus integration
+    event-bus/          # Platform event bus integration (all CivicEventType definitions)
+    services/
+      notifications.ts  # CORE-COMMS client — emits notification.requested events
+      payments.ts       # CORE-PAYMENTS client — Paystack HMAC verify + payment events
+      documents.ts      # CORE-DOCS client — emits document.generation.requested events
     sync/               # Offline sync engine (IndexedDB → server)
   modules/
     church-ngo/         # CIV-1: Church & NGO management (active UI)
@@ -30,6 +37,31 @@ src/
 migrations/             # D1 SQL migrations
 public/                 # Static assets, PWA manifest, service worker
 ```
+
+## Phase 0 Infrastructure — COMPLETED
+
+### Shared Auth (`src/core/auth.ts`)
+- `verifyWebwakaJWT<T>()` — Web Crypto HS256 verification (Cloudflare Workers compatible)
+- `createCivicAuthMiddleware<T>()` — factory replacing all local verifyJWT copies
+- `requireRole(allowedRoles[])` — generic role guard
+- Typed payload interfaces: `CivicJWTPayload`, `PartyJWTPayload`, `ElectionJWTPayload`
+- `CIVIC_JWT_KEY` constant — single context key across all modules
+
+### Shared Response Helpers (`src/core/response.ts`)
+- `apiSuccess<T>()`, `apiError()`, `apiPaginated<T>()` — canonical response factories
+- `koboToNaira()` — Nigerian kobo→Naira formatter
+- `generateId()` — crypto.randomUUID()
+- `nowMs()`, `nowSec()` — timestamp helpers
+
+### Platform Service Clients (`src/core/services/`)
+All three clients emit events; no direct SDK calls to Paystack/WhatsApp/PDF:
+- **notifications.ts** — `NotificationService.requestNotification()` → `notification.requested` event
+- **payments.ts** — `PaymentService.initializePayment()` + Paystack HMAC webhook verification
+- **documents.ts** — `DocumentService.requestDocument()` → `document.generation.requested` event
+
+### Module Migrations (T003, T004)
+- `church-ngo/api/index.ts` — removed local verifyJWT, apiSuccess, apiError, koboToNaira, generateId, now(); now imports from core/auth + core/response; all context keys use CIVIC_JWT_KEY
+- `political-party/api/index.ts` — same migration; all 35 route handlers updated
 
 ## Development
 

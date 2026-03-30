@@ -1,7 +1,10 @@
 /**
- * WebWaka Civic — Shared RBAC Middleware for CIV-3 Elections & Campaigns
+ * WebWaka Civic — RBAC Middleware for CIV-3 Elections & Campaigns
  * Blueprint Reference: Part 9.2 (Universal Architecture Standards)
  * Blueprint Reference: Part 9.3 (Platform Conventions — RBAC)
+ *
+ * This module provides Elections-specific role guards.
+ * JWT verification is delegated to src/core/auth.ts (single source of truth).
  *
  * Roles (Elections & Campaigns):
  *   admin            — TENANT_ADMIN; full create/update/delete/approve access
@@ -11,77 +14,49 @@
  *   volunteer        — Accept/complete own task assignments
  *
  * Usage:
- *   app.post("/path", requireElectionRole(["admin", "campaign_manager"]), async (c) => { ... })
+ *   app.post("/path", requireElectionRole(["admin", "campaign_manager"]), handler)
+ *   app.delete("/path", requireAdmin, handler)
  */
 
-import type { Context, MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
+import {
+  verifyWebwakaJWT,
+  CIVIC_JWT_KEY,
+  type ElectionJWTPayload,
+} from "./auth";
+
+// ─── Re-exports for backward compatibility ────────────────────────────────────
+
+export type { ElectionJWTPayload } from "./auth";
 
 // ─── Role Definition ──────────────────────────────────────────────────────────
 
 export type ElectionRole = "admin" | "campaign_manager" | "candidate" | "voter" | "volunteer";
 
-// ─── JWT Payload ──────────────────────────────────────────────────────────────
-
-export interface ElectionJWTPayload {
-  sub: string;
-  tenantId: string;
-  organizationId: string;
-  role: ElectionRole;
-  name: string;
-  exp: number;
-}
-
-// ─── JWT Verification ─────────────────────────────────────────────────────────
-
-/**
- * Verify a HS256 JWT and return the parsed payload, or null on failure.
- * Compatible with Cloudflare Workers (uses Web Crypto API).
- */
-export async function verifyElectionJWT(
-  token: string,
-  secret: string
-): Promise<ElectionJWTPayload | null> {
-  try {
-    const [headerB64, payloadB64, signatureB64] = token.split(".");
-    if (!headerB64 || !payloadB64 || !signatureB64) return null;
-
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"]
-    );
-
-    const data = encoder.encode(`${headerB64}.${payloadB64}`);
-    const signature = Uint8Array.from(
-      atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")),
-      (ch) => ch.charCodeAt(0)
-    );
-
-    const valid = await crypto.subtle.verify("HMAC", key, signature, data);
-    if (!valid) return null;
-
-    const payload = JSON.parse(atob(payloadB64)) as ElectionJWTPayload;
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
 // ─── Context Key ──────────────────────────────────────────────────────────────
 
-export const ELECTION_JWT_KEY = "electionJwtPayload";
+/**
+ * Hono context key for the Elections JWT payload.
+ * Aliased to CIVIC_JWT_KEY (shared key) for platform consistency.
+ * Kept as a distinct export for backward compatibility with elections/volunteers modules.
+ */
+export const ELECTION_JWT_KEY = CIVIC_JWT_KEY;
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
 /**
- * Verify the Bearer JWT and store the payload in context.
+ * electionAuthMiddleware
+ *
+ * Verify the Bearer JWT and store the ElectionJWTPayload in context.
+ * Delegates signature verification to verifyWebwakaJWT from core/auth.
+ *
  * Must be registered before any requireElectionRole middleware.
- * Skip public paths by not applying this middleware to them.
+ * Skip public paths (health checks) by guarding at the call site:
+ *
+ *   app.use("*", async (c, next) => {
+ *     if (c.req.path.endsWith("/health")) return next();
+ *     return electionAuthMiddleware()(c, next);
+ *   });
  */
 export function electionAuthMiddleware(jwtSecretEnvKey = "JWT_SECRET"): MiddlewareHandler {
   return async (c, next) => {
@@ -96,7 +71,7 @@ export function electionAuthMiddleware(jwtSecretEnvKey = "JWT_SECRET"): Middlewa
       return c.json({ success: false, error: "Server misconfiguration — JWT_SECRET not set" }, 500);
     }
 
-    const payload = await verifyElectionJWT(token, secret);
+    const payload = await verifyWebwakaJWT<ElectionJWTPayload>(token, secret);
     if (payload === null) {
       return c.json({ success: false, error: "Unauthorized — invalid or expired token" }, 401);
     }
@@ -111,8 +86,8 @@ export function electionAuthMiddleware(jwtSecretEnvKey = "JWT_SECRET"): Middlewa
 /**
  * requireElectionRole(allowedRoles)
  *
- * Route-level middleware that enforces RBAC. Must be used after
- * electionAuthMiddleware (which sets the JWT payload in context).
+ * Route-level middleware enforcing Elections RBAC.
+ * Must be used after electionAuthMiddleware (which sets the JWT payload).
  *
  * Example:
  *   app.post("/elections", requireElectionRole(["admin", "campaign_manager"]), handler)
@@ -145,3 +120,16 @@ export const requireAdmin = requireElectionRole(["admin"]);
 
 /** TENANT_ADMIN or CAMPAIGN_MANAGER may perform this action */
 export const requireAdminOrManager = requireElectionRole(["admin", "campaign_manager"]);
+
+// ─── verifyElectionJWT (backward compatibility) ───────────────────────────────
+
+/**
+ * @deprecated Use verifyWebwakaJWT<ElectionJWTPayload> from core/auth instead.
+ * Kept for any external callers that import this directly.
+ */
+export async function verifyElectionJWT(
+  token: string,
+  secret: string
+): Promise<ElectionJWTPayload | null> {
+  return verifyWebwakaJWT<ElectionJWTPayload>(token, secret);
+}

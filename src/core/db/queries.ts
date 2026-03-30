@@ -10,8 +10,12 @@
 import type {
   CivicAnnouncement,
   CivicAttendance,
+  CivicBudget,
+  CivicDepartment,
   CivicDonation,
   CivicEvent,
+  CivicExpense,
+  CivicExpenseStatus,
   CivicGrant,
   CivicMember,
   CivicOrganization,
@@ -229,6 +233,99 @@ export async function softDeleteMember(
     .bind(now, now, id, tenantId)
     .run();
 }
+
+// ─── Departments ──────────────────────────────────────────────────────────────
+
+export async function getDepartmentsByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string
+): Promise<CivicDepartment[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM civic_departments
+       WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL
+       ORDER BY name ASC`
+    )
+    .bind(tenantId, organizationId)
+    .all<CivicDepartment>();
+  return result.results;
+}
+
+export async function getDepartmentById(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<CivicDepartment | null> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM civic_departments
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(id, tenantId)
+    .first<CivicDepartment>();
+  return result ?? null;
+}
+
+export async function createDepartment(
+  db: D1Database,
+  dept: CivicDepartment
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO civic_departments (
+        id, tenantId, organizationId, name, description, leaderId, createdAt, updatedAt
+      ) VALUES (?,?,?,?,?,?,?,?)`
+    )
+    .bind(
+      dept.id, dept.tenantId, dept.organizationId, dept.name,
+      dept.description ?? null, dept.leaderId ?? null,
+      dept.createdAt, dept.updatedAt
+    )
+    .run();
+}
+
+export async function updateDepartment(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  updates: Partial<Pick<CivicDepartment, "name" | "description" | "leaderId">>
+): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare(
+      `UPDATE civic_departments
+       SET name = COALESCE(?, name),
+           description = COALESCE(?, description),
+           leaderId = COALESCE(?, leaderId),
+           updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(
+      updates.name ?? null,
+      updates.description ?? null,
+      updates.leaderId ?? null,
+      now, id, tenantId
+    )
+    .run();
+}
+
+export async function softDeleteDepartment(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare(
+      `UPDATE civic_departments SET deletedAt = ?, updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(now, now, id, tenantId)
+    .run();
+}
+
+// ─── Members (continued) ──────────────────────────────────────────────────────
 
 export async function getMemberCount(
   db: D1Database,
@@ -582,6 +679,149 @@ export async function getAnnouncementsByOrg(
     .bind(tenantId, organizationId, now, now)
     .all<CivicAnnouncement>();
   return result.results;
+}
+
+// ─── Expenses ─────────────────────────────────────────────────────────────────
+
+export interface ExpenseFilters {
+  departmentId?: string;
+  status?: CivicExpenseStatus;
+  category?: string;
+  fromDate?: number;
+  toDate?: number;
+}
+
+export async function getExpensesByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  filters: ExpenseFilters = {},
+  limit = 50,
+  offset = 0
+): Promise<CivicExpense[]> {
+  let sql = `SELECT * FROM civic_expenses
+             WHERE tenantId = ? AND organizationId = ? AND deletedAt IS NULL`;
+  const params: unknown[] = [tenantId, organizationId];
+  if (filters.departmentId) { sql += " AND departmentId = ?"; params.push(filters.departmentId); }
+  if (filters.status) { sql += " AND status = ?"; params.push(filters.status); }
+  if (filters.category) { sql += " AND category = ?"; params.push(filters.category); }
+  if (filters.fromDate) { sql += " AND expenseDate >= ?"; params.push(filters.fromDate); }
+  if (filters.toDate) { sql += " AND expenseDate <= ?"; params.push(filters.toDate); }
+  sql += " ORDER BY expenseDate DESC LIMIT ? OFFSET ?";
+  params.push(limit, offset);
+  const result = await db.prepare(sql).bind(...params).all<CivicExpense>();
+  return result.results;
+}
+
+export async function createExpense(
+  db: D1Database,
+  expense: CivicExpense
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO civic_expenses (
+        id, tenantId, organizationId, departmentId, category, description,
+        amountKobo, currency, expenseDate, receiptUrl, recordedBy, approvedBy,
+        status, notes, createdAt, updatedAt
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    .bind(
+      expense.id, expense.tenantId, expense.organizationId,
+      expense.departmentId ?? null, expense.category, expense.description,
+      expense.amountKobo, expense.currency, expense.expenseDate,
+      expense.receiptUrl ?? null, expense.recordedBy, expense.approvedBy ?? null,
+      expense.status, expense.notes ?? null, expense.createdAt, expense.updatedAt
+    )
+    .run();
+}
+
+export async function updateExpenseStatus(
+  db: D1Database,
+  id: string,
+  tenantId: string,
+  status: CivicExpenseStatus,
+  approvedBy?: string
+): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare(
+      `UPDATE civic_expenses
+       SET status = ?, approvedBy = COALESCE(?, approvedBy), updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(status, approvedBy ?? null, now, id, tenantId)
+    .run();
+}
+
+export async function softDeleteExpense(
+  db: D1Database,
+  id: string,
+  tenantId: string
+): Promise<void> {
+  const now = Date.now();
+  await db
+    .prepare(
+      `UPDATE civic_expenses SET deletedAt = ?, updatedAt = ?
+       WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+    )
+    .bind(now, now, id, tenantId)
+    .run();
+}
+
+export async function getTotalExpensesKobo(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  year?: number
+): Promise<number> {
+  let sql = `SELECT COALESCE(SUM(amountKobo), 0) as total FROM civic_expenses
+             WHERE tenantId = ? AND organizationId = ? AND status = 'approved' AND deletedAt IS NULL`;
+  const params: unknown[] = [tenantId, organizationId];
+  if (year) {
+    const start = new Date(year, 0, 1).getTime();
+    const end = new Date(year + 1, 0, 1).getTime();
+    sql += " AND expenseDate >= ? AND expenseDate < ?";
+    params.push(start, end);
+  }
+  const result = await db.prepare(sql).bind(...params).first<{ total: number }>();
+  return result?.total ?? 0;
+}
+
+// ─── Budgets ──────────────────────────────────────────────────────────────────
+
+export async function getBudgetsByOrg(
+  db: D1Database,
+  tenantId: string,
+  organizationId: string,
+  year?: number
+): Promise<CivicBudget[]> {
+  let sql = `SELECT * FROM civic_budgets
+             WHERE tenantId = ? AND organizationId = ?`;
+  const params: unknown[] = [tenantId, organizationId];
+  if (year) { sql += " AND year = ?"; params.push(year); }
+  sql += " ORDER BY year DESC, month ASC, category ASC";
+  const result = await db.prepare(sql).bind(...params).all<CivicBudget>();
+  return result.results;
+}
+
+export async function createBudget(
+  db: D1Database,
+  budget: CivicBudget
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO civic_budgets (
+        id, tenantId, organizationId, departmentId, year, month,
+        category, amountKobo, currency, notes, createdAt, updatedAt
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    .bind(
+      budget.id, budget.tenantId, budget.organizationId,
+      budget.departmentId ?? null, budget.year, budget.month ?? null,
+      budget.category, budget.amountKobo, budget.currency,
+      budget.notes ?? null, budget.createdAt, budget.updatedAt
+    )
+    .run();
 }
 
 // ─── Dashboard Summary ────────────────────────────────────────────────────────

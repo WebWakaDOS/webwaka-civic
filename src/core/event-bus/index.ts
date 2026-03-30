@@ -58,7 +58,17 @@ export type CivicEventType =
   | "expense.recorded"
   | "expense.approved"
   | "material.published"
-  | "announcement.posted";
+  | "announcement.posted"
+  // ─── Platform Service Events (CORE-COMMS, CORE-PAYMENTS, CORE-DOCS) ──────────
+  // These are published by Civic modules; the platform services consume and act on them.
+  // Build Once Use Everywhere: no Paystack/WhatsApp/PDF SDKs in this repo.
+  | "notification.requested"
+  | "payment.initialize.requested"
+  | "payment.webhook.received"
+  | "payment.verified"
+  | "payment.failed"
+  | "document.generation.requested"
+  | "document.generation.completed";
 
 /**
  * CIVIC_EVENTS — named constants for all event types.

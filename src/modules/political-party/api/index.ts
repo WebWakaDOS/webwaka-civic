@@ -15,6 +15,19 @@ import { emitEvent } from "@webwaka/core";
 import { createEventBus, PARTY_EVENTS, type EventBusEnv } from "../../../core/event-bus/index";
 import { createLogger } from "../../../core/logger";
 import {
+  createCivicAuthMiddleware,
+  CIVIC_JWT_KEY,
+  type PartyJWTPayload,
+} from "../../../core/auth";
+import {
+  apiSuccess,
+  apiError,
+  koboToNaira,
+  generateId,
+  nowMs,
+} from "../../../core/response";
+import { createDocumentService } from "../../../core/services/documents";
+import {
   getPartyOrganizationByTenant,
   createPartyOrganization,
   updatePartyOrganization,
@@ -71,48 +84,6 @@ interface Env extends EventBusEnv {
   JWT_SECRET: string;
 }
 
-// ─── JWT Payload ──────────────────────────────────────────────────────────────
-
-interface JWTPayload {
-  sub: string;
-  tenantId: string;
-  organizationId: string;
-  role: "admin" | "organizer" | "member" | "viewer";
-  name: string;
-  exp: number;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function generateId(): string {
-  return crypto.randomUUID();
-}
-
-function nowMs(): number {
-  return Date.now();
-}
-
-function koboToNaira(kobo: number): string {
-  return new Intl.NumberFormat("en-NG", {
-    style: "currency",
-    currency: "NGN",
-    minimumFractionDigits: 2,
-  }).format(kobo / 100);
-}
-
-function apiSuccess<T>(data: T): Response {
-  return new Response(JSON.stringify({ success: true, data }), {
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-function apiError(message: string, status = 400): Response {
-  return new Response(JSON.stringify({ success: false, error: message }), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 /**
  * Generate a party membership number in INEC-aligned format.
  * Format: {PARTY_ABBR}-{STATE_CODE}-{SEQUENCE}
@@ -136,55 +107,13 @@ function generateCardNumber(abbreviation: string, sequence: number): string {
   return `${abbr}-CARD-${year}-${seq}`;
 }
 
-// ─── Edge JWT Validation ──────────────────────────────────────────────────────
-
-async function verifyJWT(token: string, secret: string): Promise<JWTPayload | null> {
-  try {
-    const [headerB64, payloadB64, signatureB64] = token.split(".");
-    if (!headerB64 || !payloadB64 || !signatureB64) return null;
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyData,
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"]
-    );
-    const data = encoder.encode(`${headerB64}.${payloadB64}`);
-    const signature = Uint8Array.from(
-      atob(signatureB64.replace(/-/g, "+").replace(/_/g, "/")),
-      (c) => c.charCodeAt(0)
-    );
-    const valid = await crypto.subtle.verify("HMAC", key, signature, data);
-    if (!valid) return null;
-    const payload = JSON.parse(atob(payloadB64)) as JWTPayload;
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const app = new Hono<{ Bindings: Env }>();
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
-app.use("/api/party/*", async (c, next) => {
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return apiError("Unauthorized — missing token", 401);
-  }
-  const token = authHeader.slice(7);
-  const payload = await verifyJWT(token, c.env.JWT_SECRET);
-  if (payload === null) {
-    return apiError("Unauthorized — invalid or expired token", 401);
-  }
-  c.set("jwtPayload" as never, payload);
-  return next();
-});
+app.use("/api/party/*", createCivicAuthMiddleware<PartyJWTPayload>());
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 
@@ -200,12 +129,8 @@ app.get("/api/party/health", (c) => {
 // ─── Migration Endpoint ───────────────────────────────────────────────────────
 
 app.post("/api/party/migrate", async (c) => {
-  const authHeader = c.req.header("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return apiError("Unauthorized", 401);
-  }
-  const payload = await verifyJWT(authHeader.slice(7), c.env.JWT_SECRET);
-  if (payload === null || payload.role !== "admin") {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload | undefined;
+  if (!payload || payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
   try {
@@ -228,7 +153,7 @@ app.post("/api/party/migrate", async (c) => {
 
 // GET /api/party/organizations/:id — get party org details
 app.get("/api/party/organizations/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const org = await getPartyOrganizationByTenant(c.env.DB, payload.tenantId);
   if (org === null) {
     return apiError("Organization not found", 404);
@@ -238,7 +163,7 @@ app.get("/api/party/organizations/:id", async (c) => {
 
 // PATCH /api/party/organizations/:id — update org settings (admin only)
 app.patch("/api/party/organizations/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -252,7 +177,7 @@ app.patch("/api/party/organizations/:id", async (c) => {
 
 // GET /api/party/organizations/:id/stats — dashboard statistics
 app.get("/api/party/organizations/:id/stats", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const stats = await getPartyDashboardSummary(c.env.DB, payload.tenantId, payload.organizationId);
   return apiSuccess({
     ...stats,
@@ -263,7 +188,7 @@ app.get("/api/party/organizations/:id/stats", async (c) => {
 
 // POST /api/party/organizations — create party organization
 app.post("/api/party/organizations", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -295,7 +220,7 @@ app.post("/api/party/organizations", async (c) => {
 
 // GET /api/party/structures — list all structures (flat or by parent)
 app.get("/api/party/structures", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const parentId = c.req.query("parentId");
   const structures = await getPartyStructuresByOrg(
     c.env.DB,
@@ -308,7 +233,7 @@ app.get("/api/party/structures", async (c) => {
 
 // GET /api/party/structures/:id — get structure with children
 app.get("/api/party/structures/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const id = c.req.param("id");
   const structure = await getPartyStructureById(c.env.DB, id, payload.tenantId);
   if (structure === null) {
@@ -325,7 +250,7 @@ app.get("/api/party/structures/:id", async (c) => {
 
 // POST /api/party/structures — create new structure node (admin)
 app.post("/api/party/structures", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -366,7 +291,7 @@ app.post("/api/party/structures", async (c) => {
 
 // PATCH /api/party/structures/:id — update structure (admin)
 app.patch("/api/party/structures/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -379,7 +304,7 @@ app.patch("/api/party/structures/:id", async (c) => {
 
 // DELETE /api/party/structures/:id — soft delete (admin)
 app.delete("/api/party/structures/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -393,7 +318,7 @@ app.delete("/api/party/structures/:id", async (c) => {
 
 // GET /api/party/members — paginated list, filter by structure/status
 app.get("/api/party/members", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const structureId = c.req.query("structureId");
   const memberStatus = c.req.query("memberStatus");
   const role = c.req.query("role");
@@ -408,7 +333,7 @@ app.get("/api/party/members", async (c) => {
 
 // GET /api/party/members/:id — full member profile
 app.get("/api/party/members/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const id = c.req.param("id");
   const member = await getPartyMemberById(c.env.DB, id, payload.tenantId);
   if (member === null) {
@@ -419,7 +344,7 @@ app.get("/api/party/members/:id", async (c) => {
 
 // POST /api/party/members — register new member (NDPR consent required)
 app.post("/api/party/members", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -481,7 +406,7 @@ app.post("/api/party/members", async (c) => {
 
 // PATCH /api/party/members/:id — update member details
 app.patch("/api/party/members/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -508,7 +433,7 @@ app.patch("/api/party/members/:id", async (c) => {
 
 // DELETE /api/party/members/:id — soft delete (expel/resign)
 app.delete("/api/party/members/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -520,7 +445,7 @@ app.delete("/api/party/members/:id", async (c) => {
 
 // GET /api/party/members/:id/dues — member dues history
 app.get("/api/party/members/:id/dues", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const id = c.req.param("id");
   const dues = await getPartyDuesByMember(c.env.DB, id, payload.tenantId);
   return apiSuccess(dues);
@@ -528,7 +453,7 @@ app.get("/api/party/members/:id/dues", async (c) => {
 
 // GET /api/party/members/:id/card — member ID card details
 app.get("/api/party/members/:id/card", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const id = c.req.param("id");
   const card = await getPartyIdCardByMember(c.env.DB, id, payload.tenantId);
   if (card === null) {
@@ -541,7 +466,7 @@ app.get("/api/party/members/:id/card", async (c) => {
 
 // GET /api/party/dues — list dues records (filter by year/structure)
 app.get("/api/party/dues", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const yearStr = c.req.query("year");
   const year = yearStr ? parseInt(yearStr, 10) : undefined;
   const dues = await getPartyDuesByOrg(c.env.DB, payload.tenantId, payload.organizationId, year);
@@ -550,7 +475,7 @@ app.get("/api/party/dues", async (c) => {
 
 // GET /api/party/dues/summary — dues collection summary by year
 app.get("/api/party/dues/summary", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const year = parseInt(c.req.query("year") ?? String(new Date().getFullYear()), 10);
   const summary = await getPartyDuesSummary(c.env.DB, payload.tenantId, payload.organizationId, year);
   return apiSuccess({
@@ -562,7 +487,7 @@ app.get("/api/party/dues/summary", async (c) => {
 
 // POST /api/party/dues — record dues payment
 app.post("/api/party/dues", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -601,7 +526,7 @@ app.post("/api/party/dues", async (c) => {
 
 // PATCH /api/party/dues/:id — update dues record
 app.patch("/api/party/dues/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -616,7 +541,7 @@ app.patch("/api/party/dues/:id", async (c) => {
 
 // DELETE /api/party/dues/:id — soft delete
 app.delete("/api/party/dues/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -629,7 +554,7 @@ app.delete("/api/party/dues/:id", async (c) => {
 
 // GET /api/party/positions — list positions by structure
 app.get("/api/party/positions", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const structureId = c.req.query("structureId");
   if (!structureId) {
     return apiError("structureId query parameter is required");
@@ -640,7 +565,7 @@ app.get("/api/party/positions", async (c) => {
 
 // POST /api/party/positions — create/assign position
 app.post("/api/party/positions", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -676,7 +601,7 @@ app.post("/api/party/positions", async (c) => {
 
 // PATCH /api/party/positions/:id — update position holder
 app.patch("/api/party/positions/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -696,7 +621,7 @@ app.patch("/api/party/positions/:id", async (c) => {
 
 // DELETE /api/party/positions/:id — soft delete
 app.delete("/api/party/positions/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -709,7 +634,7 @@ app.delete("/api/party/positions/:id", async (c) => {
 
 // GET /api/party/meetings — list meetings by structure
 app.get("/api/party/meetings", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const structureId = c.req.query("structureId");
   const meetings = await getPartyMeetingsByOrg(
     c.env.DB,
@@ -722,7 +647,7 @@ app.get("/api/party/meetings", async (c) => {
 
 // POST /api/party/meetings — create meeting
 app.post("/api/party/meetings", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -757,7 +682,7 @@ app.post("/api/party/meetings", async (c) => {
 
 // PATCH /api/party/meetings/:id — update meeting
 app.patch("/api/party/meetings/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -769,7 +694,7 @@ app.patch("/api/party/meetings/:id", async (c) => {
 
 // DELETE /api/party/meetings/:id — soft delete
 app.delete("/api/party/meetings/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -782,7 +707,7 @@ app.delete("/api/party/meetings/:id", async (c) => {
 
 // GET /api/party/announcements — list announcements
 app.get("/api/party/announcements", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const announcements = await getPartyAnnouncementsByOrg(
     c.env.DB,
     payload.tenantId,
@@ -793,7 +718,7 @@ app.get("/api/party/announcements", async (c) => {
 
 // POST /api/party/announcements — create announcement
 app.post("/api/party/announcements", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -829,7 +754,7 @@ app.post("/api/party/announcements", async (c) => {
 
 // POST /api/party/id-cards — issue new ID card for member
 app.post("/api/party/id-cards", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin" && payload.role !== "organizer") {
     return apiError("Forbidden — admin or organizer only", 403);
   }
@@ -865,13 +790,60 @@ app.post("/api/party/id-cards", async (c) => {
     memberId: card.memberId,
     cardNumber: card.cardNumber,
   } });
+  const docSvc = createDocumentService(c.env);
+  await docSvc.requestMemberIdCard({
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    memberName: `${member.firstName} ${member.lastName}`,
+    memberPhone: member.phone ?? undefined,
+    membershipNumber: card.cardNumber,
+    organizationName: org?.name ?? "Party",
+    expiresAt: card.expiresAt,
+    cardType: "party_id_card",
+  });
   logger.info("Party ID card issued", { id: card.id, memberId: card.memberId, cardNumber, tenantId: payload.tenantId });
   return apiSuccess(card);
 });
 
+// GET /api/party/id-cards/:id/regenerate — re-request card document generation
+app.post("/api/party/id-cards/:id/regenerate", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
+  if (payload.role !== "admin" && payload.role !== "organizer") {
+    return apiError("Forbidden — admin or organizer only", 403);
+  }
+  const id = c.req.param("id");
+  const card = await c.env.DB.prepare(
+    "SELECT * FROM party_id_cards WHERE id = ? AND tenantId = ? AND deletedAt IS NULL"
+  ).bind(id, payload.tenantId).first<{ id: string; memberId: string; cardNumber: string; isActive: number; expiresAt?: number }>();
+  if (!card) {
+    return apiError("ID card not found", 404);
+  }
+  if (!card.isActive) {
+    return apiError("Cannot regenerate a revoked ID card", 409);
+  }
+  const member = await getPartyMemberById(c.env.DB, card.memberId, payload.tenantId);
+  if (!member) {
+    return apiError("Member not found", 404);
+  }
+  const org = await getPartyOrganizationByTenant(c.env.DB, payload.tenantId);
+  const docSvc = createDocumentService(c.env);
+  await docSvc.requestMemberIdCard({
+    tenantId: payload.tenantId,
+    organizationId: payload.organizationId,
+    memberName: `${member.firstName} ${member.lastName}`,
+    memberPhone: member.phone ?? undefined,
+    membershipNumber: card.cardNumber,
+    organizationName: org?.name ?? "Party",
+    expiresAt: card.expiresAt,
+    cardType: "party_id_card",
+  });
+  logger.info("Party ID card regeneration requested", { cardId: id, memberId: card.memberId, tenantId: payload.tenantId });
+  return apiSuccess({ queued: true, cardId: id, cardNumber: card.cardNumber });
+});
+
 // PATCH /api/party/id-cards/:id — revoke ID card
 app.patch("/api/party/id-cards/:id", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   if (payload.role !== "admin") {
     return apiError("Forbidden — admin only", 403);
   }
@@ -894,7 +866,7 @@ app.patch("/api/party/id-cards/:id", async (c) => {
 
 // GET /api/party/sync/pull — CORE-1 pull endpoint (delta sync)
 app.get("/api/party/sync/pull", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const sinceStr = c.req.query("since");
   const since = sinceStr ? parseInt(sinceStr, 10) : 0;
   const [members, structures, dues] = await Promise.all([
@@ -919,7 +891,7 @@ app.get("/api/party/sync/pull", async (c) => {
 
 // POST /api/party/sync/push — CORE-1 push endpoint (mutation queue)
 app.post("/api/party/sync/push", async (c) => {
-  const payload = c.get("jwtPayload" as never) as JWTPayload;
+  const payload = c.get(CIVIC_JWT_KEY as never) as PartyJWTPayload;
   const body = await c.req.json<{
     mutations: Array<{
       id: string;
