@@ -1088,7 +1088,8 @@ app.get("/:electionId/results", async (c) => {
       candidateId: candidate.id,
       name: candidate.name,
       votes: candidate.voteCount,
-      percentage: total > 0 ? ((candidate.voteCount / total) * 100).toFixed(2) : 0,
+      // percentage as number (2 decimal places) — Math.round avoids float string (Part 9.2)
+      percentage: total > 0 ? Math.round((candidate.voteCount / total) * 10000) / 100 : 0,
       rank: index + 1,
     }));
 

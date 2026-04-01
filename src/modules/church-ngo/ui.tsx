@@ -1032,7 +1032,8 @@ function CreateDonationPage({
 
   const handleSubmit = async () => {
     const errs: Record<string, string> = {};
-    const amountKobo = Math.round(parseFloat(form.amountNaira) * 100);
+    // nairaToKobo: multiply by 100 then round to avoid float drift (Part 9.2)
+    const amountKobo = Math.round(parseFloat(form.amountNaira || "0") * 100);
 
     if (!form.amountNaira || isNaN(amountKobo)) errs.amount = "Valid amount required";
     else {
@@ -1751,7 +1752,8 @@ function ProjectCreatePage({ dispatch }: { dispatch: React.Dispatch<Action> }) {
     const res = await apiPost<{ projectId: string }>("/projects", {
       name: form.name,
       donorName: form.donorName || undefined,
-      budgetKobo: form.budgetKobo ? Math.round(parseFloat(form.budgetKobo) * 100) : 0,
+      // budgetKobo is stored as integer kobo — parse as integer, no multiplication
+      budgetKobo: form.budgetKobo ? Math.trunc(parseFloat(form.budgetKobo)) : 0,
       description: form.description || undefined,
       status: form.status,
     });
