@@ -81,7 +81,7 @@ import type {
   CivicBudget,
   CivicDepartment,
   CivicDonation,
-  CivicEvent,
+  CivicEventRecord,
   CivicExpense,
   CivicGrant,
   CivicMember,
@@ -909,12 +909,12 @@ app.post("/api/civic/events", async (c) => {
   }
 
   try {
-    const body = await c.req.json<Partial<CivicEvent>>();
+    const body = await c.req.json<Partial<CivicEventRecord>>();
 
     if (!body.title) return apiError("title is required");
     if (!body.startTime) return apiError("startTime is required");
 
-    const event: CivicEvent = {
+    const event: CivicEventRecord = {
       id: generateId(),
       tenantId: payload.tenantId,
       organizationId: payload.organizationId,

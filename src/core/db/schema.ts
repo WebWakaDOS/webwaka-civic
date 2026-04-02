@@ -552,7 +552,7 @@ export interface CivicPledge {
   deletedAt?: number;
 }
 
-export interface CivicEvent {
+export interface CivicEventRecord {
   id: string;
   tenantId: string;
   organizationId: string;

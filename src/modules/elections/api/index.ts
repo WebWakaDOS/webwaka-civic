@@ -89,7 +89,11 @@ app.use("*", async (c, next) => {
 // ─── Utility Functions ──────────────────────────────────────────────────────────
 
 /**
- * Publish event to event bus
+ * Publish event to event bus using unified WebWakaEvent schema.
+ * Ref: EVENT_BUS_SCHEMA.md — event, tenantId, payload, timestamp (number)
+ *
+ * Legacy `electionId` is mapped into the payload object to preserve
+ * domain context while conforming to the standard schema.
  */
 async function publishEvent(
   env: ElectionsEnv,
@@ -107,12 +111,10 @@ async function publishEvent(
           Authorization: `Bearer ${env.EVENT_BUS_TOKEN}`,
         },
         body: JSON.stringify({
-          type: eventType,
+          event: eventType,
           tenantId,
-          electionId,
-          payload,
-          timestamp: new Date().toISOString(),
-          version: "1.0",
+          payload: { ...payload, electionId },
+          timestamp: Date.now(),
         }),
       });
     }

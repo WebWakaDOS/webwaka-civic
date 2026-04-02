@@ -4,6 +4,9 @@
  *
  * All financial transactions and critical state changes must publish events
  * via the event bus. This module provides the integration layer.
+ *
+ * Schema: Unified WebWakaEvent<T> from @webwaka/core/events
+ * Ref: EVENT_BUS_SCHEMA.md — event, tenantId, payload, timestamp (number)
  */
 
 import { createLogger } from "../logger";
@@ -111,6 +114,31 @@ export const CIVIC_EVENTS = {
   ANNOUNCEMENT_POSTED: "announcement.posted" as CivicEventType,
 } as const;
 
+/**
+ * Unified WebWaka Platform Event Bus Schema.
+ *
+ * Strictly conforms to the governance-mandated WebWakaEvent<T> shape:
+ *   event (string), tenantId (string), payload (T), timestamp (number)
+ *
+ * Legacy fields (organizationId, version) are moved into the payload.
+ *
+ * Reference: EVENT_BUS_SCHEMA.md in webwaka-platform-docs
+ */
+export interface WebWakaEvent<T = Record<string, unknown>> {
+  /** The event type in dot-notation (e.g., 'civic.member.created') */
+  event: string;
+  /** The ID of the tenant emitting the event */
+  tenantId: string;
+  /** The event-specific payload (includes organizationId and any domain fields) */
+  payload: T;
+  /** UTC Unix timestamp in milliseconds */
+  timestamp: number;
+}
+
+/**
+ * @deprecated Use WebWakaEvent<T> instead for governance compliance.
+ * Kept for backward compatibility only.
+ */
 export interface CivicEvent {
   type: CivicEventType;
   tenantId: string;
@@ -129,11 +157,11 @@ export interface EventBusEnv {
 
 // ─── Event Bus Client ─────────────────────────────────────────────────────────
 
-export type EventHandler = (event: CivicEvent) => void | Promise<void>;
+export type EventHandler = (event: WebWakaEvent) => void | Promise<void>;
 
 export class EventBus {
   private readonly env: EventBusEnv;
-  private readonly handlers: Map<CivicEventType, EventHandler[]> = new Map();
+  private readonly handlers: Map<string, EventHandler[]> = new Map();
   private readonly fetchFn: typeof fetch;
 
   constructor(env: EventBusEnv, fetchFn?: typeof fetch) {
@@ -143,21 +171,24 @@ export class EventBus {
 
   /**
    * Publish an event to the CORE-2 Platform Event Bus.
+   * Uses the unified WebWakaEvent<T> schema (governance-mandated).
+   *
+   * Legacy `organizationId` parameter is mapped into the payload object
+   * to preserve domain context while conforming to the standard schema.
+   *
    * Falls back to local handlers if the event bus URL is not configured.
    */
   async publish(
-    type: CivicEventType,
+    eventType: CivicEventType,
     tenantId: string,
     organizationId: string,
     payload: Record<string, unknown>
   ): Promise<boolean> {
-    const event: CivicEvent = {
-      type,
+    const event: WebWakaEvent = {
+      event: eventType,
       tenantId,
-      organizationId,
-      payload,
-      timestamp: new Date().toISOString(),
-      version: "1.0",
+      payload: { ...payload, organizationId },
+      timestamp: Date.now(),
     };
 
     // Invoke local handlers first (for testing and local processing)
@@ -167,26 +198,26 @@ export class EventBus {
     if (this.env.EVENT_BUS_URL !== undefined && this.env.EVENT_BUS_TOKEN !== undefined) {
       return this.publishRemote(event);
     } else {
-      logger.warn("Event bus URL not configured — event published locally only", { type, tenantId });
+      logger.warn("Event bus URL not configured — event published locally only", { event: eventType, tenantId });
       return false;
     }
   }
 
-  private async invokeLocalHandlers(event: CivicEvent): Promise<void> {
-    const handlers = this.handlers.get(event.type) ?? [];
+  private async invokeLocalHandlers(event: WebWakaEvent): Promise<void> {
+    const handlers = this.handlers.get(event.event) ?? [];
     for (const handler of handlers) {
       try {
         await handler(event);
       } catch (err) {
         logger.error("Local event handler failed", {
-          type: event.type,
+          event: event.event,
           error: String(err),
         });
       }
     }
   }
 
-  private async publishRemote(event: CivicEvent): Promise<boolean> {
+  private async publishRemote(event: WebWakaEvent): Promise<boolean> {
     if (this.env.EVENT_BUS_URL === undefined || this.env.EVENT_BUS_TOKEN === undefined) {
       return false;
     }
@@ -204,19 +235,19 @@ export class EventBus {
       if (!response.ok) {
         logger.error("Event bus publish failed", {
           status: response.status,
-          type: event.type,
+          event: event.event,
         });
         return false;
       } else {
         logger.info("Event published to CORE-2 bus", {
-          type: event.type,
+          event: event.event,
           tenantId: event.tenantId,
         });
         return true;
       }
     } catch (err) {
       logger.error("Event bus network error", {
-        type: event.type,
+        event: event.event,
         error: String(err),
       });
       return false;
@@ -226,16 +257,16 @@ export class EventBus {
   /**
    * Register a local event handler (used in tests and local processing).
    */
-  on(type: CivicEventType, handler: EventHandler): void {
-    const existing = this.handlers.get(type) ?? [];
-    this.handlers.set(type, [...existing, handler]);
+  on(eventType: string, handler: EventHandler): void {
+    const existing = this.handlers.get(eventType) ?? [];
+    this.handlers.set(eventType, [...existing, handler]);
   }
 
   /**
    * Remove all handlers for a given event type (used in tests).
    */
-  off(type: CivicEventType): void {
-    this.handlers.delete(type);
+  off(eventType: string): void {
+    this.handlers.delete(eventType);
   }
 }
 

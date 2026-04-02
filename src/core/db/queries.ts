@@ -13,7 +13,7 @@ import type {
   CivicBudget,
   CivicDepartment,
   CivicDonation,
-  CivicEvent,
+  CivicEventRecord,
   CivicExpense,
   CivicExpenseStatus,
   CivicGrant,
@@ -533,7 +533,7 @@ export async function getEventsByOrg(
   organizationId: string,
   limit = 20,
   offset = 0
-): Promise<CivicEvent[]> {
+): Promise<CivicEventRecord[]> {
   const result = await db
     .prepare(
       `SELECT * FROM civic_events
@@ -541,13 +541,13 @@ export async function getEventsByOrg(
        ORDER BY startTime DESC LIMIT ? OFFSET ?`
     )
     .bind(tenantId, organizationId, limit, offset)
-    .all<CivicEvent>();
+    .all<CivicEventRecord>();
   return result.results;
 }
 
 export async function createEvent(
   db: D1Database,
-  event: CivicEvent
+  event: CivicEventRecord
 ): Promise<void> {
   await db
     .prepare(

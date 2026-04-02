@@ -511,7 +511,7 @@ describe("createEventBus", () => {
     await bus.publish(CIVIC_EVENTS.MEMBER_CREATED, "t1", "o1", { memberId: "m1" });
     expect(capturedBody).not.toBeNull();
     const parsed = JSON.parse(capturedBody!);
-    expect(parsed.type).toBe("civic.member.created");
+    expect(parsed.event).toBe("civic.member.created");
   });
 
   it("publish returns false on fetch error", async () => {
@@ -582,7 +582,7 @@ import {
   type CivicMember,
   type CivicDonation,
   type CivicPledge,
-  type CivicEvent,
+  type CivicEventRecord,
   type CivicGrant,
 } from "../../core/db/schema.ts";
 

@@ -31,7 +31,7 @@ import {
 } from "./utils";
 import type {
   CivicDonation,
-  CivicEvent,
+  CivicEventRecord,
   CivicGrant,
   CivicMember,
   CivicNdprAuditLog,
@@ -80,7 +80,7 @@ interface AppState {
   members: CivicMember[];
   donations: CivicDonation[];
   pledges: CivicPledge[];
-  events: CivicEvent[];
+  events: CivicEventRecord[];
   grants: CivicGrant[];
   dashboardStats: {
     totalMembers: number;
@@ -102,7 +102,7 @@ type Action =
   | { type: "SET_MEMBERS"; members: CivicMember[] }
   | { type: "SET_DONATIONS"; donations: CivicDonation[] }
   | { type: "SET_PLEDGES"; pledges: CivicPledge[] }
-  | { type: "SET_EVENTS"; events: CivicEvent[] }
+  | { type: "SET_EVENTS"; events: CivicEventRecord[] }
   | { type: "SET_GRANTS"; grants: CivicGrant[] }
   | { type: "SET_DASHBOARD_STATS"; stats: AppState["dashboardStats"] }
   | { type: "SET_WEBHOOK_LOGS"; logs: CivicWebhookLog[] }
@@ -2135,7 +2135,7 @@ export function ChurchNGOApp() {
       apiGet<{ members: CivicMember[]; total: number }>("/members"),
       apiGet<{ donations: CivicDonation[]; totalKobo: number }>("/donations"),
       apiGet<{ pledges: CivicPledge[] }>("/pledges"),
-      apiGet<{ events: CivicEvent[] }>("/events"),
+      apiGet<{ events: CivicEventRecord[] }>("/events"),
     ]);
 
     if (dashRes.success && dashRes.data) {
