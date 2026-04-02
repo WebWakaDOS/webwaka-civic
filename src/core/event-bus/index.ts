@@ -135,19 +135,6 @@ export interface WebWakaEvent<T = Record<string, unknown>> {
   timestamp: number;
 }
 
-/**
- * @deprecated Use WebWakaEvent<T> instead for governance compliance.
- * Kept for backward compatibility only.
- */
-export interface CivicEvent {
-  type: CivicEventType;
-  tenantId: string;
-  organizationId: string;
-  payload: Record<string, unknown>;
-  timestamp: string;
-  version: "1.0";
-}
-
 // ─── Environment ──────────────────────────────────────────────────────────────
 
 export interface EventBusEnv {
