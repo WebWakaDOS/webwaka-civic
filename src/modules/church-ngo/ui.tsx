@@ -13,6 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useReducer, useState } from "react";
+import { UsherPanel } from "./UsherPanel";
 import { apiDelete, apiGet, apiPatch, apiPost, runMigrations } from "./apiClient";
 import { DEFAULT_LANGUAGE, getSupportedLanguages, getTranslations, type Language } from "./i18n";
 import { CivicOfflineDb, createSyncEngine } from "../../core/sync/client";
@@ -67,7 +68,8 @@ type Page =
   | "portal-events"
   | "portal-profile"
   | "webhook-log"
-  | "ndpr-audit";
+  | "ndpr-audit"
+  | "usher-panel";
 
 interface AppState {
   page: Page;
@@ -2093,6 +2095,7 @@ const NAV_ITEMS = [
   { page: "pledges" as Page, icon: "🤝", key: "pledges" as const },
   { page: "events" as Page, icon: "📅", key: "events" as const },
   { page: "analytics" as Page, icon: "📊", key: "analytics" as const },
+  { page: "usher-panel" as Page, icon: "📿", key: "usher" as const },
 ];
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
@@ -2217,12 +2220,22 @@ export function ChurchNGOApp() {
         return <WebhookLogPage state={state} dispatch={dispatch} />;
       case "ndpr-audit":
         return <NdprAuditPage state={state} dispatch={dispatch} />;
+      case "usher-panel":
+        return (
+          <UsherPanel
+            tenantId={state.organization?.tenantId ?? "local"}
+            organizationId={state.organization?.id ?? "default"}
+            apiBase=""
+            getAuthToken={() => localStorage.getItem("webwaka_token") ?? ""}
+            onBack={() => dispatch({ type: "SET_PAGE", page: "dashboard" })}
+          />
+        );
       default:
         return <DashboardPage state={state} dispatch={dispatch} t={t} />;
     }
   };
 
-  const mainPage = (["dashboard", "members", "donations", "pledges", "events", "analytics"] as Page[]).includes(
+  const mainPage = (["dashboard", "members", "donations", "pledges", "events", "analytics", "usher-panel"] as Page[]).includes(
     state.page
   )
     ? state.page

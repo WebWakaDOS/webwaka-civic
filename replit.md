@@ -38,6 +38,28 @@ migrations/             # D1 SQL migrations
 public/                 # Static assets, PWA manifest, service worker
 ```
 
+## T-CIV-01 — Offline Tithe & Offering Logging (Usher PWA) — COMPLETED
+
+### New Files
+- `src/modules/church-ngo/offlineDonations.ts` — Dexie CRUD helpers, denomination math, `DonationSyncManager` class
+- `src/modules/church-ngo/UsherPanel.tsx` — Mobile-first PWA Usher Station UI (denomination tap buttons, running total, offline save, sync status)
+- `src/modules/church-ngo/offlineDonation.test.ts` — 37 tests covering denomination math, serialization, type structure, and DonationSyncManager sync/fail/retry scenarios
+
+### Modified Files
+- `src/core/sync/client.ts` — Added `PendingDonation` interface and `pendingDonations` table to `CivicOfflineDb` (Dexie v2 schema migration)
+- `src/modules/church-ngo/ui.tsx` — Added `usher-panel` page type, UsherPanel import, render case, and "Usher" nav item (📿)
+- `src/modules/church-ngo/i18n.ts` — Added `nav.usher` key to all 4 languages (en/yo/ig/ha)
+- `src/modules/church-ngo/api/index.ts` — Added `POST /api/civic/donations/bulk-sync` endpoint with idempotency guard (offlineId dedup)
+- `vitest.config.ts` — Added `fake-indexeddb` setup file for Dexie IndexedDB tests
+- `src/test-setup.ts` — Auto-polyfills IndexedDB in test environment
+
+### Architecture
+- Ushers tap denomination buttons (₦50–₦50,000) → Dexie `pendingDonations` table (offline-first write)
+- `DonationSyncManager.flushPending()` POSTs each record to `/api/civic/donations` on reconnect
+- `flushBulk()` batches multiple records to `/api/civic/donations/bulk-sync` (idempotent)
+- Background Sync API registered if available; `online` event fallback otherwise
+- All amounts stored as kobo integers per Nigeria-First conventions
+
 ## Phase 4 — Unified Frontend & CIV-3 Module UI — COMPLETED (Weeks 19–24)
 
 ### T001: Unified App Shell (`src/App.tsx`)

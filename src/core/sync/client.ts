@@ -74,6 +74,29 @@ export interface CachedEvent {
   updatedAt: number;
 }
 
+// ─── Pending Donation Types (Usher PWA — T-CIV-01) ───────────────────────────
+
+export type PendingDonationStatus = "pending" | "syncing" | "synced" | "failed";
+
+export interface PendingDonation {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  donationType: "tithe" | "offering" | "special" | "seed";
+  amountKobo: number;
+  denominationBreakdown: string;
+  memberId?: string;
+  notes?: string;
+  collectedBy: string;
+  serviceRef: string;
+  status: PendingDonationStatus;
+  syncAttempts: number;
+  lastSyncError?: string;
+  collectedAt: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ─── Dexie Database ───────────────────────────────────────────────────────────
 
 export class CivicOfflineDb extends Dexie {
@@ -81,6 +104,7 @@ export class CivicOfflineDb extends Dexie {
   members!: Table<CachedMember, string>;
   donations!: Table<CachedDonation, string>;
   events!: Table<CachedEvent, string>;
+  pendingDonations!: Table<PendingDonation, string>;
 
   constructor() {
     super("webwaka-civic-offline");
@@ -91,6 +115,16 @@ export class CivicOfflineDb extends Dexie {
       members: "id, tenantId, organizationId, memberStatus, updatedAt",
       donations: "id, tenantId, organizationId, memberId, donationType, donationDate, synced",
       events: "id, tenantId, organizationId, eventType, startTime",
+    });
+
+    this.version(2).stores({
+      mutationQueue:
+        "++id, entityType, entityId, tenantId, organizationId, synced, createdAt",
+      members: "id, tenantId, organizationId, memberStatus, updatedAt",
+      donations: "id, tenantId, organizationId, memberId, donationType, donationDate, synced",
+      events: "id, tenantId, organizationId, eventType, startTime",
+      pendingDonations:
+        "id, tenantId, organizationId, status, donationType, collectedAt, [tenantId+status]",
     });
   }
 }

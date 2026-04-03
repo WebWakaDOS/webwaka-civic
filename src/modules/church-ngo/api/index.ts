@@ -725,6 +725,87 @@ app.post("/api/civic/donations", async (c) => {
   }
 });
 
+// POST /api/civic/donations/bulk-sync — T-CIV-01: batch-persist offline donations
+// Accepts an array of donations collected offline by ushers and persists each one.
+// Idempotent: donations with a matching offlineId are skipped if already stored.
+
+app.post("/api/civic/donations/bulk-sync", async (c) => {
+  const payload = c.get(CIVIC_JWT_KEY as never) as CivicJWTPayload;
+  const logger = createLogger("donations/bulk-sync", payload.tenantId);
+
+  try {
+    const body = await c.req.json<{
+      donations: Array<{
+        donationType: string;
+        amountKobo: number;
+        paymentMethod?: string;
+        donationDate?: number;
+        memberId?: string | null;
+        notes?: string;
+        offlineId?: string;
+      }>;
+    }>();
+
+    if (!Array.isArray(body.donations) || body.donations.length === 0) {
+      return apiError("donations array is required and must not be empty");
+    }
+
+    if (body.donations.length > 500) {
+      return apiError("Maximum 500 donations per bulk-sync request", 422);
+    }
+
+    const results: { id: string; offlineId?: string; status: "created" | "skipped" }[] = [];
+
+    for (const item of body.donations) {
+      if (!item.amountKobo || item.amountKobo <= 0) continue;
+      if (!item.donationType) continue;
+
+      // Idempotency: skip if offlineId already present in notes or description
+      if (item.offlineId) {
+        const existing = await c.env.DB.prepare(
+          `SELECT id FROM civic_donations WHERE tenantId = ? AND description LIKE ? AND deletedAt IS NULL LIMIT 1`
+        ).bind(payload.tenantId, `%${item.offlineId}%`).first<{ id: string }>();
+
+        if (existing) {
+          results.push({ id: existing.id, offlineId: item.offlineId, status: "skipped" });
+          continue;
+        }
+      }
+
+      const donation: CivicDonation = {
+        id: generateId(),
+        tenantId: payload.tenantId,
+        organizationId: payload.organizationId,
+        memberId: item.memberId ?? undefined,
+        donationType: item.donationType as CivicDonation["donationType"],
+        amountKobo: item.amountKobo,
+        currency: "NGN",
+        description: item.offlineId ? `offline:${item.offlineId}` : undefined,
+        receiptNumber: `RCT-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+        paymentMethod: (item.paymentMethod ?? "cash") as CivicDonation["paymentMethod"],
+        paymentStatus: "success",
+        notes: item.notes,
+        recordedBy: payload.sub,
+        donationDate: item.donationDate ?? nowMs(),
+        createdAt: nowMs(),
+        updatedAt: nowMs(),
+      };
+
+      await createDonation(c.env.DB, donation);
+      results.push({ id: donation.id, offlineId: item.offlineId, status: "created" });
+    }
+
+    const created = results.filter((r) => r.status === "created").length;
+    const skipped = results.filter((r) => r.status === "skipped").length;
+
+    logger.info("Bulk-sync completed", { created, skipped, tenantId: payload.tenantId });
+    return apiSuccess({ created, skipped, results });
+  } catch (err) {
+    logger.error("Bulk-sync failed", { error: String(err) });
+    return apiError("Internal server error", 500);
+  }
+});
+
 // ─── Pledges ──────────────────────────────────────────────────────────────────
 
 app.get("/api/civic/pledges", async (c) => {
