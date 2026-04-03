@@ -64,8 +64,8 @@ export async function logDonationOffline(params: {
     denominationBreakdown: serializeBreakdown(params.breakdown),
     collectedBy: params.collectedBy,
     serviceRef: params.serviceRef,
-    memberId: params.memberId,
-    notes: params.notes,
+    ...(params.memberId !== undefined ? { memberId: params.memberId } : {}),
+    ...(params.notes !== undefined ? { notes: params.notes } : {}),
     status: "pending",
     syncAttempts: 0,
     collectedAt: Date.now(),
@@ -133,6 +133,30 @@ export async function clearSyncedDonations(tenantId: string): Promise<number> {
   return synced.length;
 }
 
+/**
+ * Reset any donations stuck in "syncing" back to "pending".
+ * Called at the start of each flush to recover from a previous crash or
+ * abrupt disconnect that left records in an intermediate state.
+ */
+export async function resetStuckSyncing(tenantId: string, organizationId: string): Promise<number> {
+  const stuck = await db.pendingDonations
+    .where("[tenantId+status]")
+    .equals([tenantId, "syncing"])
+    .filter((d) => d.organizationId === organizationId)
+    .toArray();
+  if (stuck.length === 0) return 0;
+  await Promise.all(
+    stuck.map((d) =>
+      db.pendingDonations.update(d.id, {
+        status: "pending" as PendingDonationStatus,
+        lastSyncError: "Reset after interrupted sync",
+        updatedAt: Date.now(),
+      })
+    )
+  );
+  return stuck.length;
+}
+
 // ─── Donation Sync Manager ────────────────────────────────────────────────────
 
 const SYNC_TAG = "civic-donation-sync";
@@ -160,8 +184,11 @@ export class DonationSyncManager {
   /**
    * Register a Background Sync tag so the service worker can trigger
    * flushPending() automatically when connectivity is restored.
+   *
+   * Returns a cleanup function that removes the online fallback listener.
+   * Call the returned function when the component unmounts.
    */
-  registerBackgroundSync(): void {
+  registerBackgroundSync(): () => void {
     if ("serviceWorker" in navigator && "SyncManager" in window) {
       navigator.serviceWorker.ready
         .then((reg) =>
@@ -170,18 +197,26 @@ export class DonationSyncManager {
           }).sync.register(SYNC_TAG)
         )
         .catch(() => {
-          // Background Sync API unavailable — fallback: listen for online event
+          // Background Sync API unavailable — fallback handled by online listener below
         });
     }
 
-    window.addEventListener("online", () => {
+    const onlineHandler = () => {
       this.flushPending().catch(() => {});
-    });
+    };
+    window.addEventListener("online", onlineHandler);
+
+    return () => {
+      window.removeEventListener("online", onlineHandler);
+    };
   }
 
   /**
    * Flush all pending donations to the server in a bulk POST.
    * Idempotent — safe to call multiple times.
+   *
+   * First resets any donations stuck in "syncing" from a prior interrupted
+   * flush so they are retried rather than orphaned.
    */
   async flushPending(): Promise<{ synced: number; failed: number }> {
     if (this.isFlushing) return { synced: 0, failed: 0 };
@@ -191,6 +226,9 @@ export class DonationSyncManager {
     let failed = 0;
 
     try {
+      // Recover records left in "syncing" by a previous crash or abrupt close
+      await resetStuckSyncing(this.tenantId, this.organizationId);
+
       const pending = await getPendingDonations(this.tenantId, this.organizationId);
       if (pending.length === 0) return { synced: 0, failed: 0 };
 

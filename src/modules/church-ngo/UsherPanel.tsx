@@ -366,6 +366,17 @@ export function UsherPanel({
     createDonationSyncManager({ apiBase, tenantId, organizationId, getAuthToken })
   );
 
+  // Keep syncManager in sync with latest props — useRef only initializes once,
+  // so we must update it whenever key props change.
+  useEffect(() => {
+    syncManager.current = createDonationSyncManager({
+      apiBase,
+      tenantId,
+      organizationId,
+      getAuthToken,
+    });
+  }, [apiBase, tenantId, organizationId, getAuthToken]);
+
   const showToast = useCallback(
     (msg: string, type: "success" | "error" | "info" = "info") => {
       setToast({ msg, type });
@@ -386,13 +397,15 @@ export function UsherPanel({
 
   useEffect(() => {
     refreshCounts();
-    syncManager.current.registerBackgroundSync();
+    // registerBackgroundSync returns a cleanup that removes its online listener
+    const cleanupSync = syncManager.current.registerBackgroundSync();
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
     return () => {
+      cleanupSync();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
       if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -426,7 +439,7 @@ export function UsherPanel({
         breakdown,
         collectedBy: collectedBy.trim(),
         serviceRef: serviceRef.trim() || "Service",
-        notes: notes.trim() || undefined,
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
       clearBreakdown();
       setNotes("");

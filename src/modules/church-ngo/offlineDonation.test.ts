@@ -453,6 +453,152 @@ describe("logDonationOffline", () => {
   });
 });
 
+// ─── resetStuckSyncing ────────────────────────────────────────────────────────
+
+describe("resetStuckSyncing", () => {
+  it("resets 'syncing' records back to 'pending'", async () => {
+    const {
+      logDonationOffline: logFn,
+      updateDonationStatus: updateFn,
+      resetStuckSyncing: resetFn,
+      getAllOfflineDonations: getAllFn,
+    } = await import("./offlineDonations.ts");
+
+    const tenantId = `t-stuck-${crypto.randomUUID()}`;
+    const organizationId = `o-${crypto.randomUUID()}`;
+
+    const d1 = await logFn({
+      tenantId, organizationId, donationType: "offering",
+      breakdown: { 500: 1 }, collectedBy: "U", serviceRef: "S",
+    });
+    await updateFn(d1.id, "syncing");
+
+    const recovered = await resetFn(tenantId, organizationId);
+    expect(recovered).toBe(1);
+
+    const all = await getAllFn(tenantId, organizationId);
+    expect(all[0].status).toBe("pending");
+    expect(all[0].lastSyncError).toMatch(/interrupted/i);
+  });
+
+  it("leaves non-syncing records untouched", async () => {
+    const {
+      logDonationOffline: logFn,
+      resetStuckSyncing: resetFn,
+      getAllOfflineDonations: getAllFn,
+    } = await import("./offlineDonations.ts");
+
+    const tenantId = `t-stuck2-${crypto.randomUUID()}`;
+    const organizationId = `o-${crypto.randomUUID()}`;
+
+    await logFn({
+      tenantId, organizationId, donationType: "tithe",
+      breakdown: { 1000: 1 }, collectedBy: "U", serviceRef: "S",
+    });
+
+    const recovered = await resetFn(tenantId, organizationId);
+    expect(recovered).toBe(0);
+
+    const all = await getAllFn(tenantId, organizationId);
+    expect(all[0].status).toBe("pending");
+  });
+
+  it("returns 0 when no stuck records exist", async () => {
+    const { resetStuckSyncing: resetFn } = await import("./offlineDonations.ts");
+    const tenantId = `t-nostuck-${crypto.randomUUID()}`;
+    const organizationId = `o-${crypto.randomUUID()}`;
+    const result = await resetFn(tenantId, organizationId);
+    expect(result).toBe(0);
+  });
+});
+
+describe("DonationSyncManager.flushPending — orphan recovery", () => {
+  it("retries a donation stuck in 'syncing' from a prior crash", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => "" });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const tenantId = `t-orphan-${crypto.randomUUID()}`;
+    const organizationId = `o-${crypto.randomUUID()}`;
+
+    const {
+      logDonationOffline: logFn,
+      updateDonationStatus: updateFn,
+      countPending: countFn,
+    } = await import("./offlineDonations.ts");
+
+    const d = await logFn({
+      tenantId, organizationId, donationType: "offering",
+      breakdown: { 500: 1 }, collectedBy: "U", serviceRef: "S",
+    });
+    // Simulate mid-crash: donation left in "syncing" state
+    await updateFn(d.id, "syncing");
+
+    const countBefore = await countFn(tenantId, organizationId);
+    expect(countBefore).toBe(0); // "syncing" is not counted as "pending"
+
+    const mgr = new DonationSyncManager({
+      apiBase: "https://example.com",
+      tenantId,
+      organizationId,
+      getAuthToken: () => "tok",
+    });
+
+    // flushPending should recover the orphaned "syncing" record
+    const result = await mgr.flushPending();
+    expect(result.synced).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    globalThis.fetch = originalFetch;
+  });
+});
+
+describe("DonationSyncManager.registerBackgroundSync — cleanup", () => {
+  it("returns a function", () => {
+    const mgr = createDonationSyncManager({
+      apiBase: "",
+      tenantId: "t1",
+      organizationId: "o1",
+      getAuthToken: () => "tok",
+    });
+    const cleanup = mgr.registerBackgroundSync();
+    expect(typeof cleanup).toBe("function");
+    cleanup();
+  });
+
+  it("removes the online listener on cleanup (no duplicate triggers)", () => {
+    const listeners: EventListenerOrEventListenerObject[] = [];
+    const addSpy = vi.spyOn(window, "addEventListener").mockImplementation(
+      (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type === "online") listeners.push(listener);
+      }
+    );
+    const removeSpy = vi.spyOn(window, "removeEventListener").mockImplementation(
+      (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type === "online") {
+          const i = listeners.indexOf(listener);
+          if (i !== -1) listeners.splice(i, 1);
+        }
+      }
+    );
+
+    const mgr = createDonationSyncManager({
+      apiBase: "",
+      tenantId: "t1",
+      organizationId: "o1",
+      getAuthToken: () => "tok",
+    });
+    const cleanup = mgr.registerBackgroundSync();
+    expect(listeners.length).toBe(1);
+    cleanup();
+    expect(listeners.length).toBe(0);
+
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+});
+
 // ─── clearSyncedDonations ─────────────────────────────────────────────────────
 
 describe("clearSyncedDonations", () => {
