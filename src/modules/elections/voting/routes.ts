@@ -43,38 +43,26 @@ import {
   getElectionConflicts,
   resolveConflict,
 } from "../offlineDb";
+import {
+  signBallot,
+  verifyBallotSignature,
+  hashBallot,
+  generateNonce,
+} from "./crypto";
 
 const logger = createLogger("voting-routes");
-const votingRouter = new Hono();
+
+const DEFAULT_SIGNING_SECRET = "webwaka-civic-voting-secret-key";
+
+const votingRouter = new Hono<{ Bindings: { JWT_SECRET?: string; DB?: any } }>();
 
 // ─── Helper Functions ───────────────────────────────────────────────────────
 
 /**
- * Encrypt vote data (placeholder - use proper encryption in production)
+ * Resolve signing secret from Hono env or fall back to default.
  */
-function encryptVote(candidateId: string, voterId: string): string {
-  const data = JSON.stringify({ candidateId, voterId, timestamp: Date.now() });
-  return Buffer.from(data).toString("base64");
-}
-
-/**
- * Decrypt vote data
- */
-function decryptVote(encryptedVote: string): { candidateId: string; voterId: string } | null {
-  try {
-    const data = Buffer.from(encryptedVote, "base64").toString("utf-8");
-    return JSON.parse(data);
-  } catch (error) {
-    return null;
-  }
-}
-
-/**
- * Generate verification hash for vote
- */
-function generateVerificationHash(ballotId: string, candidateId: string): string {
-  const data = `${ballotId}:${candidateId}:${Date.now()}`;
-  return Buffer.from(data).toString("hex").substring(0, 16);
+function getSecret(env: { JWT_SECRET?: string } | undefined): string {
+  return env?.JWT_SECRET ?? DEFAULT_SIGNING_SECRET;
 }
 
 /**
@@ -245,15 +233,21 @@ votingRouter.post("/elections/:electionId/voting/cast", async (c) => {
       return c.json({ error: enforcement.error }, 403);
     }
 
-    // Create ballot
-    const encryptedVote = encryptVote(candidateId, voterId!);
+    // Generate per-ballot nonce and cryptographic signature
+    const nonce = generateNonce();
+    const secret = getSecret(c.env);
+    const ballotSignature = signBallot(voterId!, electionId, candidateId, nonce, secret);
+    const encryptedVote = ballotSignature;
+
     const ballot = await createBallot(
       electionId,
       voterId!,
       candidateId,
       "", // candidateName would be fetched from DB
       encryptedVote,
-      offlineOnly || false
+      offlineOnly || false,
+      ballotSignature,
+      nonce
     );
 
     // Add to sync queue if online
@@ -277,7 +271,7 @@ votingRouter.post("/elections/:electionId/voting/cast", async (c) => {
       c.req.header("cf-connecting-ip")
     );
 
-    const verificationHash = generateVerificationHash(ballot.id, candidateId);
+    const verificationHash = hashBallot(ballot.id, voterId!, electionId, candidateId);
 
     logger.info("Vote cast", {
       electionId,
@@ -292,6 +286,8 @@ votingRouter.post("/elections/:electionId/voting/cast", async (c) => {
       ballot: {
         id: ballot.id,
         verificationHash,
+        ballotSignature,
+        nonce,
         status: ballot.status,
         castAt: ballot.castAt,
       },
@@ -323,11 +319,33 @@ votingRouter.post("/elections/:electionId/voting/verify", async (c) => {
       return c.json({ error: "Ballot not found" }, 404);
     }
 
-    // Verify hash matches
-    const expectedHash = generateVerificationHash(ballot.id, ballot.candidateId);
+    // Cryptographically verify the verification hash (SHA-256 over ballot fields)
+    const expectedHash = hashBallot(
+      ballot.id,
+      ballot.voterId,
+      ballot.electionId,
+      ballot.candidateId
+    );
     if (verificationHash !== expectedHash) {
       logger.warn("Vote verification failed", { ballotId, verificationHash });
       return c.json({ error: "Verification hash mismatch" }, 403);
+    }
+
+    // Verify the ballot signature if present (HMAC-SHA256)
+    if (ballot.ballotSignature && ballot.nonce) {
+      const secret = getSecret(c.env);
+      const signatureValid = verifyBallotSignature(
+        ballot.ballotSignature,
+        ballot.voterId,
+        ballot.electionId,
+        ballot.candidateId,
+        ballot.nonce,
+        secret
+      );
+      if (!signatureValid) {
+        logger.warn("Ballot signature verification failed", { ballotId });
+        return c.json({ error: "Ballot signature invalid" }, 403);
+      }
     }
 
     // Update ballot status
@@ -406,7 +424,7 @@ votingRouter.post("/elections/:electionId/voting/sync", async (c) => {
         // Mark ballot as synced
         await markBallotSynced(
           ballot.id,
-          generateVerificationHash(ballot.id, ballot.candidateId),
+          hashBallot(ballot.id, ballot.voterId, ballot.electionId, ballot.candidateId),
           Date.now()
         );
 

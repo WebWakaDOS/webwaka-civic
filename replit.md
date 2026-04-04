@@ -38,6 +38,15 @@ migrations/             # D1 SQL migrations
 public/                 # Static assets, PWA manifest, service worker
 ```
 
+## QA Certification — CERTIFIED ✓
+
+| ID | Feature | Status |
+|:---|:---|:---|
+| QA-CIV-1 | Citizen Reporting — `POST /api/reporting/reports` with geotagged coords + imageUrl | PASS |
+| QA-CIV-2 | AI Triage — `getAICompletion()` classifies category; graceful fallback | PASS |
+| QA-CIV-3 | Secure Voting — HMAC-SHA256 ballot signatures, duplicate prevention at session + DB level | PASS |
+| QA-CIV-4 | Unit tests — 820/820 passing across 10 test files | PASS |
+
 ## Phase 1: Citizen Engagement — COMPLETED (Plan section 4)
 
 ### Prompt 1 — Citizen Reporting Portal
@@ -72,6 +81,37 @@ Infrastructure | Sanitation | Security | Utilities | Environment | Health | Educ
 
 ### Architecture
 Citizens POST a report → AI triage runs (`triageReport()`) → result saved in `aiCategory`, `aiConfidence`, `aiNotes`, `aiTriagedAt` → report stored even if AI fails (fallback is non-blocking)
+
+## QA-CIV-3 — Secure Voting with Cryptographic Ballot Signatures — COMPLETED
+
+### New files
+- `migrations/012_secure_ballot_signatures.sql` — Adds `ballotSignature` (UNIQUE), `nonce` (UNIQUE) columns to `civic_ballots`; adds `idx_ballots_one_vote_per_voter` partial unique index enforcing one-vote-per-voter at the D1 DB level
+- `src/modules/elections/voting/crypto.ts` — Cryptographic primitives:
+  - `signBallot(voterId, electionId, candidateId, nonce, secret)` → HMAC-SHA256 hex (64 chars)
+  - `verifyBallotSignature(sig, ...)` → constant-time comparison via `timingSafeEqual`
+  - `hashBallot(ballotId, voterId, electionId, candidateId)` → SHA-256 hex (public verification receipt)
+  - `generateNonce()` → 32 cryptographically random bytes as hex
+- `src/modules/elections/voting/crypto.test.ts` — 35 tests across 7 groups:
+  - signBallot determinism + field sensitivity
+  - verifyBallotSignature valid/tampered/forged/length-mismatch/non-hex
+  - hashBallot determinism + field isolation
+  - generateNonce entropy + uniqueness (50-sample set)
+  - Duplicate-vote prevention (unique nonces, replay, forgery)
+  - Cross-voter isolation (no impersonation)
+  - Timing-safe comparison (bitflip detection)
+
+### Modified files
+- `src/modules/elections/voting/routes.ts` — Replaced `encryptVote()` (base64) and `generateVerificationHash()` (hex substr) with `signBallot()` + `hashBallot()`; cast endpoint returns `ballotSignature` + `nonce` to client; verify endpoint checks both SHA-256 receipt and HMAC-SHA256 signature; sync endpoint uses `hashBallot`
+- `src/modules/elections/offlineDb.ts` — Added `ballotSignature?`/`nonce?` to `BallotRecord`; updated `createBallot()` to accept and store them; bumped Dexie schema to v2 to index new fields; fixed two `exactOptionalPropertyTypes` bugs (`lastSyncError: undefined` → omit; `voteId` → conditional spread)
+- `src/worker.ts` — Imports `votingRouter`, mounts at `/api` (routes resolve to `/api/elections/:id/voting/...`); added inline `R2Bucket` type to fix missing Cloudflare type
+- `replit.md` — This entry
+
+### Security guarantees
+- **HMAC-SHA256** — attacker without `JWT_SECRET` cannot forge a valid ballot signature
+- **Per-ballot nonce** — unique per vote; nonce reuse detectable via UNIQUE D1 index
+- **Constant-time comparison** — `timingSafeEqual` prevents timing oracle attacks
+- **One-vote-per-voter** — enforced at session layer (`enforceOneVotePerVoter`) AND D1 DB layer (`idx_ballots_one_vote_per_voter` partial UNIQUE index)
+- **Anonymous** — `ballotSignature` binds to `voterId` but voterId is not exposed in tally/results queries
 
 ## T-CIV-01 — Offline Tithe & Offering Logging (Usher PWA) — COMPLETED
 

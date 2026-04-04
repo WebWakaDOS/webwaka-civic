@@ -24,6 +24,8 @@ export interface BallotRecord {
   candidateId: string;
   candidateName: string;
   encryptedVote: string;
+  ballotSignature?: string;
+  nonce?: string;
   verificationHash?: string;
   castAt: number;
   submittedAt?: number;
@@ -143,6 +145,10 @@ export class OfflineVotingDB extends Dexie {
       conflicts: "id, electionId, voterId, createdAt, [electionId+voterId]",
       syncMetadata: "key, updatedAt",
     });
+    this.version(2).stores({
+      ballots:
+        "id, electionId, voterId, status, ballotSignature, nonce, createdAt, [electionId+voterId]",
+    });
   }
 }
 
@@ -161,7 +167,9 @@ export async function createBallot(
   candidateId: string,
   candidateName: string,
   encryptedVote: string,
-  offlineOnly: boolean = true
+  offlineOnly: boolean = true,
+  ballotSignature?: string,
+  nonce?: string
 ): Promise<BallotRecord> {
   const ballot: BallotRecord = {
     id: crypto.randomUUID(),
@@ -170,6 +178,8 @@ export async function createBallot(
     candidateId,
     candidateName,
     encryptedVote,
+    ...(ballotSignature !== undefined ? { ballotSignature } : {}),
+    ...(nonce !== undefined ? { nonce } : {}),
     castAt: Date.now(),
     status: offlineOnly ? "draft" : "pending_sync",
     offlineOnly,
@@ -230,7 +240,6 @@ export async function markBallotSynced(
     verificationHash,
     submittedAt,
     syncAttempts: 0,
-    lastSyncError: undefined,
     updatedAt: Date.now(),
   });
 }
@@ -338,7 +347,7 @@ export async function markSessionVoted(
   await offlineDb.sessions.update(sessionId, {
     hasVoted: true,
     ballotId,
-    voteId,
+    ...(voteId !== undefined ? { voteId } : {}),
   });
 }
 

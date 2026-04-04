@@ -25,11 +25,14 @@ import type { D1Database } from "./core/db/queries";
 import churchNgoApp from "./modules/church-ngo/api/index";
 import politicalPartyApp from "./modules/political-party/api/index";
 import electionsApp from "./modules/elections/api/index";
+import votingRouter from "./modules/elections/voting/routes";
 import volunteersApp from "./modules/volunteers/api/index";
 import fundraisingApp from "./modules/fundraising/api/index";
 import reportingApp from "./modules/reporting/api";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
+type R2Bucket = { put: (...a: any[]) => Promise<any>; get: (...a: any[]) => Promise<any>; delete: (...a: any[]) => Promise<any> };
+
 interface Env extends EventBusEnv {
   DB: D1Database;
   STORAGE: R2Bucket;
@@ -99,6 +102,9 @@ app.route("/api/party", politicalPartyApp);
 // CIV-3: Elections & Campaigns
 app.route("/api/elections", electionsApp);
 
+// CIV-3: Secure Voting (session + ballot cast + verify + sync + results + audit)
+app.route("/api", votingRouter);
+
 // CIV-3: Volunteer Management
 app.route("/api/volunteers", volunteersApp);
 
@@ -118,6 +124,12 @@ app.notFound((c) => {
       "/api/church-ngo",
       "/api/party",
       "/api/elections",
+      "/api/elections/:id/voting/session",
+      "/api/elections/:id/voting/cast",
+      "/api/elections/:id/voting/verify",
+      "/api/elections/:id/voting/sync",
+      "/api/elections/:id/voting/results",
+      "/api/elections/:id/voting/audit-trail",
       "/api/volunteers",
       "/api/fundraising",
       "/api/reporting",
