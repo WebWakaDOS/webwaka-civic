@@ -27,6 +27,7 @@ import politicalPartyApp from "./modules/political-party/api/index";
 import electionsApp from "./modules/elections/api/index";
 import volunteersApp from "./modules/volunteers/api/index";
 import fundraisingApp from "./modules/fundraising/api/index";
+import reportingApp from "./modules/reporting/api";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 interface Env extends EventBusEnv {
@@ -34,6 +35,12 @@ interface Env extends EventBusEnv {
   STORAGE: R2Bucket;
   JWT_SECRET: string;
   ENVIRONMENT: string;
+  /** Cloudflare Workers AI binding (optional — enables AI triage) */
+  AI?: import("./core/ai-platform-client").WorkersAIBinding;
+  /** OpenAI-compatible API key (fallback AI provider) */
+  AI_API_KEY?: string;
+  /** OpenAI-compatible API base URL */
+  AI_API_URL?: string;
 }
 
 // ─── Unified Router ───────────────────────────────────────────────────────────
@@ -52,6 +59,7 @@ app.use("/api/*", jwtAuthMiddleware({
     { method: "POST", path: "/api/elections/*/migrate" },
     { method: "POST", path: "/api/party/*/migrate" },
     { method: "POST", path: "/api/civic/migrate" },
+    { method: "GET",  path: "/api/reporting/health" },
   ],
 }));
 
@@ -73,6 +81,7 @@ app.get("/health", (c) => {
         "elections",
         "volunteers",
         "fundraising",
+        "reporting",
       ],
       timestamp: new Date().toISOString(),
       uptime: "live",
@@ -96,6 +105,9 @@ app.route("/api/volunteers", volunteersApp);
 // CIV-3: Fundraising & Expenses
 app.route("/api/fundraising", fundraisingApp);
 
+// Citizen Reporting Portal
+app.route("/api/reporting", reportingApp);
+
 // ─── 404 Handler ─────────────────────────────────────────────────────────────
 app.notFound((c) => {
   return c.json({
@@ -108,6 +120,7 @@ app.notFound((c) => {
       "/api/elections",
       "/api/volunteers",
       "/api/fundraising",
+      "/api/reporting",
     ],
   }, 404);
 });

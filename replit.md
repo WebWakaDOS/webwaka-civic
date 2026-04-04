@@ -38,6 +38,41 @@ migrations/             # D1 SQL migrations
 public/                 # Static assets, PWA manifest, service worker
 ```
 
+## Phase 1: Citizen Engagement — COMPLETED (Plan section 4)
+
+### Prompt 1 — Citizen Reporting Portal
+
+**New files:**
+- `migrations/011_citizen_reporting.sql` — D1 migration: `citizen_reports` table (id, tenantId, userId, description, lat, lng, imageUrl, aiCategory, status, priority, …) + 6 indexes
+- `src/modules/reporting/types.ts` — TypeScript types: `CitizenReport`, `ReportStatus`, `ReportPriority`, request/response bodies, `ReportStats`
+- `src/modules/reporting/api.ts` — Hono API router with 6 endpoints:
+  - `POST /api/reporting/reports` — submit (any authenticated user, rate-limited 10/min/IP)
+  - `GET /api/reporting/reports` — list (admins see all; members/viewers see own; filter by status, category, priority; paginated)
+  - `GET /api/reporting/reports/stats` — aggregate stats by status/category/priority (admin/leader)
+  - `GET /api/reporting/reports/:id` — single report (owner or admin)
+  - `PATCH /api/reporting/reports/:id/status` — lifecycle update with `resolvedAt` auto-set (admin/leader)
+  - `PATCH /api/reporting/reports/:id/assign` — assign department + auto-promote `open→in_progress` (admin/leader)
+- `src/modules/reporting/api.test.ts` — 54 tests across 10 test groups
+
+### Prompt 2 — AI Issue Triage
+
+**New files:**
+- `src/core/ai-platform-client.ts` — `getAICompletion()` with 3-provider cascade:
+  1. Cloudflare Workers AI binding (`env.AI`)
+  2. OpenAI-compatible HTTP API (`env.AI_API_KEY` + `env.AI_API_URL`)
+  3. Graceful no-op fallback (non-blocking, report still stored)
+- `triageReport()` — formats triage prompt, parses JSON response, validates category enum, clamps confidence to 0–1
+
+**Modified files:**
+- `src/worker.ts` — imports `reportingApp`, mounts at `/api/reporting`, adds `AI`/`AI_API_KEY`/`AI_API_URL` env bindings, updates health check + 404 response
+- `replit.md` — this entry
+
+### AI Triage Categories
+Infrastructure | Sanitation | Security | Utilities | Environment | Health | Education | Transportation | Other
+
+### Architecture
+Citizens POST a report → AI triage runs (`triageReport()`) → result saved in `aiCategory`, `aiConfidence`, `aiNotes`, `aiTriagedAt` → report stored even if AI fails (fallback is non-blocking)
+
 ## T-CIV-01 — Offline Tithe & Offering Logging (Usher PWA) — COMPLETED
 
 ### New Files
