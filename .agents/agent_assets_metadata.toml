@@ -6,3 +6,9 @@ id = "SiZSFPoUNQlPpAcLNgzru"
 uri = "file://reports/webwaka-civic-research-report.md"
 type = "text"
 title = "WebWaka Civic — Comprehensive Research & Enhancement Report"
+
+[[outputs]]
+id = "VvbTa4-VxA2EepPxdz4kN"
+uri = "file://WEBWAKA-CIVIC-DEEP-RESEARCH-TASKBOOK.md"
+type = "text"
+title = "WebWaka Civic — Deep Research + Enhancement Taskbook"
