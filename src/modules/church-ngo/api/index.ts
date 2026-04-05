@@ -148,7 +148,39 @@ app.post("/webhooks/paystack", async (c) => {
   }
 
   const referenceId = body.data.reference;
-  const tenantId = (body.data.metadata?.tenantId as string) ?? "platform";
+  // SEC: Resolve tenantId from D1 — do NOT trust metadata blindly.
+  // A crafted Paystack webhook payload could claim any tenantId via metadata.
+  // We look up the real owner by payment reference in the DB first.
+  const metadataTenantId = (body.data.metadata?.tenantId as string) ?? null;
+  let tenantId = "platform";
+  if (metadataTenantId) {
+    try {
+      // First: confirm reference belongs to the claimed tenant
+      const record = await c.env.DB.prepare(
+        `SELECT tenant_id FROM civic_donations WHERE id = ? AND tenantId = ? LIMIT 1`
+      ).bind(referenceId, metadataTenantId).first<{ tenant_id: string }>();
+      if (record) {
+        tenantId = record.tenant_id;
+      } else {
+        // Fallback: look up by reference alone to find actual owner
+        const byRef = await c.env.DB.prepare(
+          `SELECT tenantId as tenant_id FROM civic_donations WHERE id = ? LIMIT 1`
+        ).bind(referenceId).first<{ tenant_id: string }>();
+        if (byRef) {
+          tenantId = byRef.tenant_id;
+          if (tenantId !== metadataTenantId) {
+            logger.warn("Webhook tenantId mismatch — using DB value", { reference: referenceId, metadataTenantId, dbTenantId: tenantId });
+          }
+        } else {
+          logger.warn("No DB record for webhook reference — using metadata tenantId with caution", { reference: referenceId, metadataTenantId });
+          tenantId = metadataTenantId;
+        }
+      }
+    } catch (dbErr) {
+      logger.error("DB tenantId lookup failed — falling back to metadata", { reference: referenceId, error: String(dbErr) });
+      tenantId = metadataTenantId;
+    }
+  }
   const eventKey = `${body.event}:${referenceId}`;
 
   // Idempotency — skip if we already processed this reference
