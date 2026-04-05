@@ -57,3 +57,12 @@ database_id = "3c0e20b9-e214-4fd0-8f0b-05e59109a74c"
 [[env.staging.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "webwaka-civic-storage"
+
+[[env.production.queues.producers]]
+binding = "CIVIC_EVENTS"
+queue = "webwaka-civic-events-prod"
+
+[[env.production.queues.consumers]]
+queue = "webwaka-civic-events-prod"
+max_batch_size = 10
+max_batch_timeout = 5
