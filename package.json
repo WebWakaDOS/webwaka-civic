@@ -16,13 +16,13 @@
     "@webwaka/core": "^1.6.1",
     "dexie": "^4.4.2",
     "fake-indexeddb": "^6.2.5",
-    "hono": "^4.12.10",
+    "hono": "^4.12.11",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260403.1",
+    "@cloudflare/workers-types": "^4.20260405.1",
     "@types/node": "^25.5.2",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
