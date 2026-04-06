@@ -99,33 +99,13 @@ function awardBadges(tasksCompleted: number, totalHours: number, totalPoints: nu
   return badges;
 }
 
-/**
- * Create audit log entry
- */
-async function createAuditLogEntry(
-  db: D1Database,
-  electionId: string,
-  tenantId: string,
-  action: string,
-  volunteerId?: string,
-  taskId?: string,
-  details?: Record<string, unknown>
-): Promise<void> {
-  logger.info(`Audit: ${action}`, {
-    electionId,
-    volunteerId,
-    taskId,
-    details: details as Record<string, unknown>,
-  });
-}
-
 // ─── Endpoint 1: Register Volunteer ─────────────────────────────────────────
 
 volunteerRouter.post("/elections/:electionId/volunteers", requireAdminOrManager, async (c) => {
   try {
     const electionId = c.req.param("electionId");
     const tenantId = c.req.header("x-tenant-id");
-    const { voterId, firstName, lastName, email, phone, skills, availability } = await c.req.json();
+    const { voterId, firstName, lastName, email, phone, skills, availability, state, lga, ward } = await c.req.json();
 
     if (!tenantId || !voterId || !firstName || !lastName) {
       return c.json(
@@ -136,42 +116,46 @@ volunteerRouter.post("/elections/:electionId/volunteers", requireAdminOrManager,
 
     const volunteerId = uuidv4();
     const now = Date.now();
+    const name = `${firstName} ${lastName}`;
+    const skillsJson = JSON.stringify(skills || []);
 
-    const volunteer = {
-      id: volunteerId,
-      electionId,
-      tenantId,
-      voterId,
-      firstName,
-      lastName,
-      email: email || null,
-      phone: phone || null,
-      profileImage: null,
-      bio: null,
-      skills: JSON.stringify(skills || []),
-      availability: JSON.stringify(availability || {}),
-      status: "active",
-      joinedAt: now,
-      lastActiveAt: null,
-      ndprConsent: false,
-      dataProcessingConsent: false,
-      createdAt: now,
-      updatedAt: now,
-    };
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_volunteers (id, tenantId, electionId, userId, name, phone, email,
+         state, lga, ward, status, skills, points, tasksCompleted, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 0, 0, ?, ?)`
+      )
+      .bind(
+        volunteerId, tenantId, electionId, voterId, name,
+        phone ?? null, email ?? null, state ?? null, lga ?? null, ward ?? null,
+        skillsJson, now, now
+      )
+      .run();
 
-    logger.info("Volunteer registered", { electionId, volunteerId, firstName, lastName });
+    logger.info("Volunteer registered", { electionId, volunteerId, name });
 
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "volunteer_registered",
-      volunteerId,
-      undefined,
-      { firstName, lastName, email }
-    );
-
-    return c.json({ success: true, volunteer });
+    return c.json({
+      success: true,
+      volunteer: {
+        id: volunteerId,
+        electionId,
+        tenantId,
+        userId: voterId,
+        name,
+        email: email ?? null,
+        phone: phone ?? null,
+        state: state ?? null,
+        lga: lga ?? null,
+        ward: ward ?? null,
+        status: "active",
+        skills: skillsJson,
+        availability: JSON.stringify(availability || {}),
+        points: 0,
+        tasksCompleted: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
   } catch (error) {
     logger.error("Volunteer registration error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -185,18 +169,34 @@ volunteerRouter.get("/elections/:electionId/volunteers", async (c) => {
     const electionId = c.req.param("electionId");
     const tenantId = c.req.header("x-tenant-id");
     const status = c.req.query("status") || "active";
-    const limit = parseInt(c.req.query("limit") || "50");
+    const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
     const offset = parseInt(c.req.query("offset") || "0");
 
     if (!tenantId) {
       return c.json({ error: "Missing tenant ID" }, 400);
     }
 
-    const volunteers: unknown[] = [];
+    const [rows, countRow] = await Promise.all([
+      c.env.DB
+        .prepare(
+          `SELECT * FROM civic_volunteers
+           WHERE tenantId = ? AND electionId = ? AND status = ? AND deletedAt IS NULL
+           ORDER BY points DESC, createdAt ASC LIMIT ? OFFSET ?`
+        )
+        .bind(tenantId, electionId, status, limit, offset)
+        .all(),
+      c.env.DB
+        .prepare(
+          `SELECT COUNT(*) as total FROM civic_volunteers
+           WHERE tenantId = ? AND electionId = ? AND status = ? AND deletedAt IS NULL`
+        )
+        .bind(tenantId, electionId, status)
+        .first<{ total: number }>(),
+    ]);
 
-    logger.info("Volunteers listed", { electionId, status, limit, offset });
+    logger.info("Volunteers listed", { electionId, status, limit, offset, total: countRow?.total ?? 0 });
 
-    return c.json({ success: true, volunteers, total: 0, limit, offset });
+    return c.json({ success: true, volunteers: rows.results, total: countRow?.total ?? 0, limit, offset });
   } catch (error) {
     logger.error("Volunteer listing error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -215,14 +215,17 @@ volunteerRouter.get("/elections/:electionId/volunteers/:volunteerId", async (c) 
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    const volunteer = {
-      id: volunteerId,
-      electionId,
-      firstName: "John",
-      lastName: "Doe",
-      email: "john@example.com",
-      status: "active",
-    };
+    const volunteer = await c.env.DB
+      .prepare(
+        `SELECT * FROM civic_volunteers
+         WHERE id = ? AND tenantId = ? AND electionId = ? AND deletedAt IS NULL`
+      )
+      .bind(volunteerId, tenantId, electionId)
+      .first();
+
+    if (!volunteer) {
+      return c.json({ error: "Volunteer not found" }, 404);
+    }
 
     logger.info("Volunteer profile retrieved", { electionId, volunteerId });
 
@@ -240,27 +243,47 @@ volunteerRouter.patch("/elections/:electionId/volunteers/:volunteerId", requireA
     const electionId = c.req.param("electionId");
     const volunteerId = c.req.param("volunteerId");
     const tenantId = c.req.header("x-tenant-id");
-    const { firstName, lastName, bio, skills, availability, profileImage } = await c.req.json();
+    const { firstName, lastName, email, phone, skills, state, lga, ward, status } = await c.req.json();
 
     if (!tenantId || !volunteerId) {
       return c.json({ error: "Missing required fields" }, 400);
     }
 
     const now = Date.now();
-    const updated = {
-      id: volunteerId,
-      firstName: firstName || "John",
-      lastName: lastName || "Doe",
-      bio,
-      skills: JSON.stringify(skills || []),
-      availability: JSON.stringify(availability || {}),
-      profileImage,
-      updatedAt: now,
-    };
+    const name = firstName && lastName ? `${firstName} ${lastName}` : undefined;
+
+    await c.env.DB
+      .prepare(
+        `UPDATE civic_volunteers SET
+         name = COALESCE(?, name),
+         email = COALESCE(?, email),
+         phone = COALESCE(?, phone),
+         skills = COALESCE(?, skills),
+         state = COALESCE(?, state),
+         lga = COALESCE(?, lga),
+         ward = COALESCE(?, ward),
+         status = COALESCE(?, status),
+         updatedAt = ?
+         WHERE id = ? AND tenantId = ? AND electionId = ? AND deletedAt IS NULL`
+      )
+      .bind(
+        name ?? null, email ?? null, phone ?? null,
+        skills ? JSON.stringify(skills) : null,
+        state ?? null, lga ?? null, ward ?? null, status ?? null,
+        now, volunteerId, tenantId, electionId
+      )
+      .run();
+
+    const updated = await c.env.DB
+      .prepare(
+        `SELECT * FROM civic_volunteers WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+      )
+      .bind(volunteerId, tenantId)
+      .first();
+
+    if (!updated) return c.json({ error: "Volunteer not found" }, 404);
 
     logger.info("Volunteer profile updated", { electionId, volunteerId });
-
-    await createAuditLogEntry(c.env.DB, electionId, tenantId, "volunteer_updated", volunteerId);
 
     return c.json({ success: true, volunteer: updated });
   } catch (error) {
@@ -275,7 +298,7 @@ volunteerRouter.post("/elections/:electionId/tasks", requireAdminOrManager, asyn
   try {
     const electionId = c.req.param("electionId");
     const tenantId = c.req.header("x-tenant-id");
-    const { title, taskType, description, location, startTime, endTime, maxVolunteers, pointsReward } = await c.req.json();
+    const { title, taskType, description, dueAt, priority, maxVolunteers, pointsReward, createdBy } = await c.req.json();
 
     if (!tenantId || !title || !taskType) {
       return c.json({ error: "Missing required fields: title, taskType" }, 400);
@@ -283,33 +306,46 @@ volunteerRouter.post("/elections/:electionId/tasks", requireAdminOrManager, asyn
 
     const taskId = uuidv4();
     const now = Date.now();
+    const resolvedCreatedBy = createdBy || "system";
 
-    const task = {
-      id: taskId,
-      electionId,
-      tenantId,
-      title,
-      taskType,
-      description: description || null,
-      location: location || null,
-      startTime,
-      endTime,
-      estimatedDuration: endTime ? Math.floor((endTime - startTime) / 60000) : null,
-      priority: "medium",
-      maxVolunteers: maxVolunteers || 10,
-      currentVolunteers: 0,
-      status: "open",
-      pointsReward: pointsReward || calculatePoints(taskType, 1),
-      badgeReward: JSON.stringify([]),
-      createdAt: now,
-      updatedAt: now,
-    };
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_volunteer_tasks
+         (id, tenantId, electionId, title, description, taskType, status, priority,
+          dueAt, pointsReward, createdBy, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        taskId, tenantId, electionId, title,
+        description ?? null, taskType,
+        priority ?? "normal",
+        dueAt ?? null,
+        pointsReward ?? calculatePoints(taskType, 1),
+        resolvedCreatedBy, now, now
+      )
+      .run();
 
     logger.info("Task created", { electionId, taskId, title, taskType });
 
-    await createAuditLogEntry(c.env.DB, electionId, tenantId, "task_created", undefined, taskId, { title, taskType });
-
-    return c.json({ success: true, task });
+    return c.json({
+      success: true,
+      task: {
+        id: taskId,
+        electionId,
+        tenantId,
+        title,
+        taskType,
+        description: description ?? null,
+        status: "open",
+        priority: priority ?? "normal",
+        dueAt: dueAt ?? null,
+        pointsReward: pointsReward ?? calculatePoints(taskType, 1),
+        maxVolunteers: maxVolunteers ?? 10,
+        createdBy: resolvedCreatedBy,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
   } catch (error) {
     logger.error("Task creation error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -324,18 +360,39 @@ volunteerRouter.get("/elections/:electionId/tasks", async (c) => {
     const tenantId = c.req.header("x-tenant-id");
     const taskType = c.req.query("taskType");
     const status = c.req.query("status") || "open";
-    const limit = parseInt(c.req.query("limit") || "50");
+    const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
     const offset = parseInt(c.req.query("offset") || "0");
 
     if (!tenantId) {
       return c.json({ error: "Missing tenant ID" }, 400);
     }
 
-    const tasks: unknown[] = [];
+    let sql = `SELECT * FROM civic_volunteer_tasks
+               WHERE tenantId = ? AND electionId = ? AND status = ? AND deletedAt IS NULL`;
+    const binds: (string | number)[] = [tenantId, electionId, status];
+
+    if (taskType) {
+      sql += " AND taskType = ?";
+      binds.push(taskType);
+    }
+
+    sql += " ORDER BY createdAt DESC LIMIT ? OFFSET ?";
+    binds.push(limit, offset);
+
+    const [rows, countRow] = await Promise.all([
+      c.env.DB.prepare(sql).bind(...binds).all(),
+      c.env.DB
+        .prepare(
+          `SELECT COUNT(*) as total FROM civic_volunteer_tasks
+           WHERE tenantId = ? AND electionId = ? AND status = ? AND deletedAt IS NULL${taskType ? " AND taskType = ?" : ""}`
+        )
+        .bind(...(taskType ? [tenantId, electionId, status, taskType] : [tenantId, electionId, status]))
+        .first<{ total: number }>(),
+    ]);
 
     logger.info("Tasks listed", { electionId, taskType, status, limit, offset });
 
-    return c.json({ success: true, tasks, total: 0, limit, offset });
+    return c.json({ success: true, tasks: rows.results, total: countRow?.total ?? 0, limit, offset });
   } catch (error) {
     logger.error("Task listing error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -354,19 +411,30 @@ volunteerRouter.get("/elections/:electionId/tasks/:taskId", async (c) => {
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    const task = {
-      id: taskId,
-      electionId,
-      title: "Canvassing Task",
-      taskType: "canvassing",
-      status: "open",
-      currentVolunteers: 5,
-      maxVolunteers: 10,
-    };
+    const [task, assignmentCount] = await Promise.all([
+      c.env.DB
+        .prepare(
+          `SELECT * FROM civic_volunteer_tasks
+           WHERE id = ? AND tenantId = ? AND electionId = ? AND deletedAt IS NULL`
+        )
+        .bind(taskId, tenantId, electionId)
+        .first(),
+      c.env.DB
+        .prepare(
+          `SELECT COUNT(*) as count FROM civic_volunteer_assignments
+           WHERE taskId = ? AND tenantId = ? AND status != 'cancelled'`
+        )
+        .bind(taskId, tenantId)
+        .first<{ count: number }>(),
+    ]);
+
+    if (!task) {
+      return c.json({ error: "Task not found" }, 404);
+    }
 
     logger.info("Task details retrieved", { electionId, taskId });
 
-    return c.json({ success: true, task });
+    return c.json({ success: true, task: { ...task, currentVolunteers: assignmentCount?.count ?? 0 } });
   } catch (error) {
     logger.error("Task details retrieval error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -380,31 +448,65 @@ volunteerRouter.post("/elections/:electionId/tasks/:taskId/assign", requireAdmin
     const electionId = c.req.param("electionId");
     const taskId = c.req.param("taskId");
     const tenantId = c.req.header("x-tenant-id");
-    const { volunteerId } = await c.req.json();
+    const { volunteerId, notes } = await c.req.json();
 
     if (!tenantId || !volunteerId) {
       return c.json({ error: "Missing required fields: volunteerId" }, 400);
     }
 
+    // Verify volunteer exists
+    const volunteer = await c.env.DB
+      .prepare(`SELECT id FROM civic_volunteers WHERE id = ? AND tenantId = ? AND electionId = ? AND deletedAt IS NULL`)
+      .bind(volunteerId, tenantId, electionId)
+      .first();
+
+    if (!volunteer) {
+      return c.json({ error: "Volunteer not found" }, 404);
+    }
+
+    // Verify task exists
+    const task = await c.env.DB
+      .prepare(`SELECT id FROM civic_volunteer_tasks WHERE id = ? AND tenantId = ? AND electionId = ? AND deletedAt IS NULL`)
+      .bind(taskId, tenantId, electionId)
+      .first();
+
+    if (!task) {
+      return c.json({ error: "Task not found" }, 404);
+    }
+
     const assignmentId = uuidv4();
     const now = Date.now();
 
-    const assignment = {
-      id: assignmentId,
-      electionId,
-      taskId,
-      volunteerId,
-      status: "assigned",
-      assignedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_volunteer_assignments
+         (id, tenantId, electionId, taskId, volunteerId, status, notes, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+      )
+      .bind(assignmentId, tenantId, electionId, taskId, volunteerId, notes ?? null, now, now)
+      .run();
+
+    // Mark task as assigned
+    await c.env.DB
+      .prepare(`UPDATE civic_volunteer_tasks SET assignedTo = ?, status = 'assigned', updatedAt = ? WHERE id = ? AND tenantId = ?`)
+      .bind(volunteerId, now, taskId, tenantId)
+      .run();
 
     logger.info("Volunteer assigned to task", { electionId, taskId, volunteerId, assignmentId });
 
-    await createAuditLogEntry(c.env.DB, electionId, tenantId, "volunteer_assigned", volunteerId, taskId);
-
-    return c.json({ success: true, assignment });
+    return c.json({
+      success: true,
+      assignment: {
+        id: assignmentId,
+        electionId,
+        taskId,
+        volunteerId,
+        status: "pending",
+        notes: notes ?? null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
   } catch (error) {
     logger.error("Task assignment error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -428,18 +530,40 @@ volunteerRouter.post(
       }
 
       const now = Date.now();
-      const updated = {
-        id: assignmentId,
-        status: "accepted",
-        acceptedAt: now,
-        updatedAt: now,
-      };
+
+      await c.env.DB
+        .prepare(
+          `UPDATE civic_volunteer_assignments
+           SET status = 'accepted', acceptedAt = ?, updatedAt = ?
+           WHERE id = ? AND tenantId = ? AND electionId = ?`
+        )
+        .bind(now, now, assignmentId, tenantId, electionId)
+        .run();
+
+      // Update task status to in_progress
+      const assignment = await c.env.DB
+        .prepare(`SELECT taskId FROM civic_volunteer_assignments WHERE id = ? AND tenantId = ?`)
+        .bind(assignmentId, tenantId)
+        .first<{ taskId: string }>();
+
+      if (assignment?.taskId) {
+        await c.env.DB
+          .prepare(`UPDATE civic_volunteer_tasks SET status = 'in_progress', updatedAt = ? WHERE id = ? AND tenantId = ?`)
+          .bind(now, assignment.taskId, tenantId)
+          .run();
+      }
 
       logger.info("Assignment accepted", { electionId, assignmentId });
 
-      await createAuditLogEntry(c.env.DB, electionId, tenantId, "assignment_accepted", undefined, assignmentId);
-
-      return c.json({ success: true, assignment: updated });
+      return c.json({
+        success: true,
+        assignment: {
+          id: assignmentId,
+          status: "accepted",
+          acceptedAt: now,
+          updatedAt: now,
+        },
+      });
     } catch (error) {
       logger.error("Assignment acceptance error", { error: String(error) });
       return c.json({ error: "Internal server error" }, 500);
@@ -465,32 +589,66 @@ volunteerRouter.post(
       }
 
       const now = Date.now();
-      const pointsEarned = calculatePoints("canvassing", hoursWorked || 1, isEarlyCompletion);
+      const hours = hoursWorked || 1;
 
-      const updated = {
-        id: assignmentId,
-        status: "completed",
-        completedAt: now,
-        hoursWorked: hoursWorked || 1,
+      // Fetch assignment to get volunteerId and taskType
+      const assignment = await c.env.DB
+        .prepare(
+          `SELECT va.*, vt.taskType
+           FROM civic_volunteer_assignments va
+           LEFT JOIN civic_volunteer_tasks vt ON vt.id = va.taskId
+           WHERE va.id = ? AND va.tenantId = ? AND va.electionId = ?`
+        )
+        .bind(assignmentId, tenantId, electionId)
+        .first<{ volunteerId: string; taskId: string; taskType: string }>();
+
+      if (!assignment) {
+        return c.json({ error: "Assignment not found" }, 404);
+      }
+
+      const pointsEarned = calculatePoints(assignment.taskType || "canvassing", hours, isEarlyCompletion);
+
+      await c.env.DB
+        .prepare(
+          `UPDATE civic_volunteer_assignments
+           SET status = 'completed', completedAt = ?, hoursWorked = ?, notes = COALESCE(?, notes), updatedAt = ?
+           WHERE id = ? AND tenantId = ? AND electionId = ?`
+        )
+        .bind(now, hours, feedback ?? null, now, assignmentId, tenantId, electionId)
+        .run();
+
+      // Mark task as completed
+      await c.env.DB
+        .prepare(`UPDATE civic_volunteer_tasks SET status = 'completed', updatedAt = ? WHERE id = ? AND tenantId = ?`)
+        .bind(now, assignment.taskId, tenantId)
+        .run();
+
+      // Update volunteer points and tasksCompleted
+      await c.env.DB
+        .prepare(
+          `UPDATE civic_volunteers
+           SET points = points + ?, tasksCompleted = tasksCompleted + 1, updatedAt = ?
+           WHERE id = ? AND tenantId = ?`
+        )
+        .bind(pointsEarned, now, assignment.volunteerId, tenantId)
+        .run();
+
+      logger.info("Task completed", { electionId, assignmentId, hoursWorked: hours, pointsEarned });
+
+      return c.json({
+        success: true,
+        assignment: {
+          id: assignmentId,
+          status: "completed",
+          completedAt: now,
+          hoursWorked: hours,
+          pointsEarned,
+          feedback: feedback ?? null,
+          rating: rating ?? null,
+          updatedAt: now,
+        },
         pointsEarned,
-        feedback: feedback || null,
-        rating: rating || null,
-        updatedAt: now,
-      };
-
-      logger.info("Task completed", { electionId, assignmentId, hoursWorked, pointsEarned });
-
-      await createAuditLogEntry(
-        c.env.DB,
-        electionId,
-        tenantId,
-        "task_completed",
-        undefined,
-        assignmentId,
-        { hoursWorked, pointsEarned }
-      );
-
-      return c.json({ success: true, assignment: updated, pointsEarned });
+      });
     } catch (error) {
       logger.error("Task completion error", { error: String(error) });
       return c.json({ error: "Internal server error" }, 500);
@@ -506,18 +664,41 @@ volunteerRouter.get("/elections/:electionId/volunteers/:volunteerId/assignments"
     const volunteerId = c.req.param("volunteerId");
     const tenantId = c.req.header("x-tenant-id");
     const status = c.req.query("status");
-    const limit = parseInt(c.req.query("limit") || "50");
+    const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
     const offset = parseInt(c.req.query("offset") || "0");
 
     if (!tenantId || !volunteerId) {
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    const assignments: unknown[] = [];
+    let sql = `SELECT va.*, vt.title as taskTitle, vt.taskType, vt.pointsReward
+               FROM civic_volunteer_assignments va
+               LEFT JOIN civic_volunteer_tasks vt ON vt.id = va.taskId
+               WHERE va.tenantId = ? AND va.electionId = ? AND va.volunteerId = ?`;
+    const binds: (string | number)[] = [tenantId, electionId, volunteerId];
+
+    if (status) {
+      sql += " AND va.status = ?";
+      binds.push(status);
+    }
+
+    sql += " ORDER BY va.createdAt DESC LIMIT ? OFFSET ?";
+    binds.push(limit, offset);
+
+    const [rows, countRow] = await Promise.all([
+      c.env.DB.prepare(sql).bind(...binds).all(),
+      c.env.DB
+        .prepare(
+          `SELECT COUNT(*) as total FROM civic_volunteer_assignments
+           WHERE tenantId = ? AND electionId = ? AND volunteerId = ?${status ? " AND status = ?" : ""}`
+        )
+        .bind(...(status ? [tenantId, electionId, volunteerId, status] : [tenantId, electionId, volunteerId]))
+        .first<{ total: number }>(),
+    ]);
 
     logger.info("Volunteer assignments retrieved", { electionId, volunteerId, status, limit, offset });
 
-    return c.json({ success: true, assignments, total: 0, limit, offset });
+    return c.json({ success: true, assignments: rows.results, total: countRow?.total ?? 0, limit, offset });
   } catch (error) {
     logger.error("Volunteer assignments retrieval error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -531,18 +712,56 @@ volunteerRouter.get("/elections/:electionId/leaderboard", async (c) => {
     const electionId = c.req.param("electionId");
     const tenantId = c.req.header("x-tenant-id");
     const tier = c.req.query("tier");
-    const limit = parseInt(c.req.query("limit") || "100");
+    const limit = Math.min(parseInt(c.req.query("limit") || "100"), 200);
     const offset = parseInt(c.req.query("offset") || "0");
 
     if (!tenantId) {
       return c.json({ error: "Missing tenant ID" }, 400);
     }
 
-    const leaderboard: unknown[] = [];
+    let sql = `SELECT id, name, email, phone, state, lga, ward, status, skills,
+               points, tasksCompleted,
+               CASE
+                 WHEN points >= 1000 THEN 'platinum'
+                 WHEN points >= 500 THEN 'gold'
+                 WHEN points >= 100 THEN 'silver'
+                 ELSE 'bronze'
+               END as tier,
+               ROW_NUMBER() OVER (ORDER BY points DESC, tasksCompleted DESC) as rank
+               FROM civic_volunteers
+               WHERE tenantId = ? AND electionId = ? AND status = 'active' AND deletedAt IS NULL`;
+    const binds: (string | number)[] = [tenantId, electionId];
+
+    if (tier) {
+      const tierMap: Record<string, string> = {
+        platinum: "points >= 1000",
+        gold: "points >= 500 AND points < 1000",
+        silver: "points >= 100 AND points < 500",
+        bronze: "points < 100",
+      };
+      const tierCondition = tierMap[tier];
+      if (tierCondition) {
+        sql += ` AND (${tierCondition})`;
+      }
+    }
+
+    sql += " ORDER BY points DESC, tasksCompleted DESC LIMIT ? OFFSET ?";
+    binds.push(limit, offset);
+
+    const [rows, countRow] = await Promise.all([
+      c.env.DB.prepare(sql).bind(...binds).all(),
+      c.env.DB
+        .prepare(
+          `SELECT COUNT(*) as total FROM civic_volunteers
+           WHERE tenantId = ? AND electionId = ? AND status = 'active' AND deletedAt IS NULL`
+        )
+        .bind(tenantId, electionId)
+        .first<{ total: number }>(),
+    ]);
 
     logger.info("Leaderboard retrieved", { electionId, tier, limit, offset });
 
-    return c.json({ success: true, leaderboard, total: 0, limit, offset });
+    return c.json({ success: true, leaderboard: rows.results, total: countRow?.total ?? 0, limit, offset });
   } catch (error) {
     logger.error("Leaderboard retrieval error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -561,20 +780,71 @@ volunteerRouter.get("/elections/:electionId/volunteers/:volunteerId/stats", asyn
       return c.json({ error: "Missing required fields" }, 400);
     }
 
-    const stats = {
-      volunteerId,
-      totalPoints: 0,
-      totalHours: 0,
-      tasksCompleted: 0,
-      tier: determineTier(0),
-      rank: null,
-      badgesEarned: awardBadges(0, 0, 0),
-      achievements: [],
-    };
+    const [volunteer, hoursRow, rankRow, badges] = await Promise.all([
+      c.env.DB
+        .prepare(
+          `SELECT id, name, points, tasksCompleted FROM civic_volunteers
+           WHERE id = ? AND tenantId = ? AND electionId = ? AND deletedAt IS NULL`
+        )
+        .bind(volunteerId, tenantId, electionId)
+        .first<{ id: string; name: string; points: number; tasksCompleted: number }>(),
+      c.env.DB
+        .prepare(
+          `SELECT COALESCE(SUM(hoursWorked), 0) as totalHours
+           FROM civic_volunteer_assignments
+           WHERE volunteerId = ? AND tenantId = ? AND electionId = ? AND status = 'completed'`
+        )
+        .bind(volunteerId, tenantId, electionId)
+        .first<{ totalHours: number }>(),
+      c.env.DB
+        .prepare(
+          `SELECT COUNT(*) as rank FROM civic_volunteers
+           WHERE tenantId = ? AND electionId = ? AND points > (
+             SELECT COALESCE(points, 0) FROM civic_volunteers WHERE id = ? AND deletedAt IS NULL
+           ) AND deletedAt IS NULL`
+        )
+        .bind(tenantId, electionId, volunteerId)
+        .first<{ rank: number }>(),
+      c.env.DB
+        .prepare(
+          `SELECT badgeType, awardedAt FROM civic_volunteer_badges
+           WHERE volunteerId = ? AND tenantId = ? AND electionId = ?
+           ORDER BY awardedAt DESC`
+        )
+        .bind(volunteerId, tenantId, electionId)
+        .all<{ badgeType: string; awardedAt: number }>(),
+    ]);
+
+    if (!volunteer) {
+      return c.json({ error: "Volunteer not found" }, 404);
+    }
+
+    const totalPoints = volunteer.points ?? 0;
+    const tasksCompleted = volunteer.tasksCompleted ?? 0;
+    const totalHours = hoursRow?.totalHours ?? 0;
+    const rank = (rankRow?.rank ?? 0) + 1;
+
+    const autoBadges = awardBadges(tasksCompleted, totalHours, totalPoints);
+    const manualBadges = (badges.results ?? []).map((b) => b.badgeType);
+    const allBadges = [...new Set([...autoBadges, ...manualBadges])];
 
     logger.info("Volunteer statistics retrieved", { electionId, volunteerId });
 
-    return c.json({ success: true, stats });
+    return c.json({
+      success: true,
+      stats: {
+        volunteerId,
+        name: volunteer.name,
+        totalPoints,
+        totalHours,
+        tasksCompleted,
+        tier: determineTier(totalPoints),
+        rank,
+        badgesEarned: allBadges,
+        recentBadges: badges.results ?? [],
+        achievements: allBadges.map((b) => ({ badge: b, earnedAt: Date.now() })),
+      },
+    });
   } catch (error) {
     logger.error("Volunteer statistics retrieval error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -588,33 +858,39 @@ volunteerRouter.post("/elections/:electionId/volunteers/:volunteerId/badges", re
     const electionId = c.req.param("electionId");
     const volunteerId = c.req.param("volunteerId");
     const tenantId = c.req.header("x-tenant-id");
-    const { badgeId, reason } = await c.req.json();
+    const { badgeId, reason, awardedBy } = await c.req.json();
 
     if (!tenantId || !badgeId) {
       return c.json({ error: "Missing required fields: badgeId" }, 400);
     }
 
     const now = Date.now();
-    const updated = {
-      volunteerId,
-      badgeId,
-      awardedAt: now,
-      reason: reason || null,
-    };
+    const badgeRowId = uuidv4();
+    const resolvedAwardedBy = awardedBy || "system";
+
+    await c.env.DB
+      .prepare(
+        `INSERT INTO civic_volunteer_badges
+         (id, tenantId, volunteerId, electionId, badgeType, awardedBy, awardedAt, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(badgeRowId, tenantId, volunteerId, electionId, badgeId, resolvedAwardedBy, now, now)
+      .run();
 
     logger.info("Badge awarded", { electionId, volunteerId, badgeId });
 
-    await createAuditLogEntry(
-      c.env.DB,
-      electionId,
-      tenantId,
-      "badge_awarded",
-      volunteerId,
-      undefined,
-      { badgeId, reason }
-    );
-
-    return c.json({ success: true, badge: updated });
+    return c.json({
+      success: true,
+      badge: {
+        id: badgeRowId,
+        volunteerId,
+        badgeId,
+        badgeType: badgeId,
+        reason: reason ?? null,
+        awardedBy: resolvedAwardedBy,
+        awardedAt: now,
+      },
+    });
   } catch (error) {
     logger.error("Badge award error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);

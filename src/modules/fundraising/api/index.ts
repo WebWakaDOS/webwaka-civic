@@ -254,8 +254,29 @@ fundraisingRouter.post("/elections/:electionId/donations/webhook", async (c) => 
         .prepare("UPDATE civic_campaign_donations SET status = 'completed', updatedAt = ? WHERE paymentReference = ?")
         .bind(now, payload.data.reference)
         .run();
+
+      // Emit domain event for local listeners
       await emitEvent(c.env, "campaign.donation.completed", "", {
         electionId, reference: payload.data.reference, amountKobo: payload.data.amount,
+      });
+
+      // WC-002: Emit billing.credit.recorded to webwaka-central-mgmt immutable ledger
+      // Anti-drift: all financial transactions MUST route to the central ledger
+      await emitEvent(c.env, "billing.credit.recorded", "", {
+        sourceRepo: "webwaka-civic",
+        transactionId: `WC-DON-${payload.data.reference}`,
+        amountKobo: payload.data.amount,
+        currency: "NGN",
+        category: "campaign_donation",
+        reference: payload.data.reference,
+        electionId,
+        paymentMethod: "paystack",
+        timestamp: now,
+      });
+
+      logger.info("Donation completed and ledger event emitted", {
+        reference: payload.data.reference,
+        amountKobo: payload.data.amount,
       });
     } else if (payload.event === "charge.failed") {
       const now = Date.now();
@@ -371,6 +392,28 @@ fundraisingRouter.patch("/elections/:electionId/expenses/:expId/approve", requir
     }).catch(() => {});
 
     await emitEvent(c.env, "campaign.expense.approved", jwt.tenantId, { expenseId: expId, approvedBy: jwt.sub });
+
+    // WC-002: Emit billing.debit.recorded to webwaka-central-mgmt for expense approvals
+    const expenseRecord = await c.env.DB
+      .prepare("SELECT amountKobo, currency, category FROM civic_campaign_expenses WHERE id = ? AND tenantId = ? LIMIT 1")
+      .bind(expId, jwt.tenantId)
+      .first<{ amountKobo: number; currency: string; category: string }>();
+
+    if (expenseRecord) {
+      await emitEvent(c.env, "billing.debit.recorded", jwt.tenantId, {
+        sourceRepo: "webwaka-civic",
+        transactionId: `WC-EXP-${expId}`,
+        amountKobo: expenseRecord.amountKobo,
+        currency: expenseRecord.currency ?? "NGN",
+        category: "campaign_expense",
+        expenseCategory: expenseRecord.category,
+        referenceId: expId,
+        electionId: c.req.param("electionId"),
+        approvedBy: jwt.sub,
+        timestamp: Date.now(),
+      });
+    }
+
     return c.json({ success: true, data: { id: expId, status: "approved", approvedBy: jwt.sub } });
   } catch (err) {
     logger.error("Failed to approve expense", { error: String(err) });

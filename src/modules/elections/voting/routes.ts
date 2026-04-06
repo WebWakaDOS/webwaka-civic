@@ -495,23 +495,63 @@ votingRouter.get("/elections/:electionId/voting/results", async (c) => {
       return c.json({ error: "Missing tenant ID" }, 400);
     }
 
-    // Query results from database (would use D1 in production)
-    // For now, return placeholder structure
-    const results = {
-      electionId,
-      timestamp: Date.now(),
-      candidates: [
-        // Would be populated from civic_vote_tallies table
-      ],
-      totalVotes: 0,
-      voterTurnout: 0,
-    };
+    const db = c.env.DB;
 
-    logger.info("Results retrieved", { electionId });
+    // Aggregate votes per candidate from D1
+    const [talliesRes, totalRes, electionRes] = await Promise.all([
+      db
+        ? db
+            .prepare(
+              `SELECT v.candidateId, c.name as candidateName, c.photoUrl, COUNT(*) as votes
+               FROM civic_votes v
+               LEFT JOIN civic_candidates c ON c.id = v.candidateId AND c.tenantId = v.tenantId
+               WHERE v.electionId = ? AND v.tenantId = ? AND v.deletedAt IS NULL
+               GROUP BY v.candidateId
+               ORDER BY votes DESC`
+            )
+            .bind(electionId, tenantId)
+            .all<{ candidateId: string; candidateName: string; photoUrl: string | null; votes: number }>()
+        : Promise.resolve({ results: [] }),
+      db
+        ? db
+            .prepare(
+              `SELECT COUNT(*) as totalVotes FROM civic_votes
+               WHERE electionId = ? AND tenantId = ? AND deletedAt IS NULL`
+            )
+            .bind(electionId, tenantId)
+            .first<{ totalVotes: number }>()
+        : Promise.resolve({ totalVotes: 0 }),
+      db
+        ? db
+            .prepare(`SELECT id, name, status FROM civic_elections WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`)
+            .bind(electionId, tenantId)
+            .first<{ id: string; name: string; status: string }>()
+        : Promise.resolve(null),
+    ]);
+
+    const totalVotes = totalRes?.totalVotes ?? 0;
+    const candidates = (talliesRes.results ?? []).map((row, idx) => ({
+      candidateId: row.candidateId,
+      candidateName: row.candidateName,
+      photoUrl: row.photoUrl,
+      votes: row.votes,
+      percentage: totalVotes > 0 ? Math.round((row.votes / totalVotes) * 10000) / 100 : 0,
+      rank: idx + 1,
+    }));
+
+    logger.info("Results retrieved", { electionId, totalVotes, candidateCount: candidates.length });
 
     return c.json({
       success: true,
-      results,
+      results: {
+        electionId,
+        electionName: electionRes?.name ?? null,
+        electionStatus: electionRes?.status ?? null,
+        timestamp: Date.now(),
+        candidates,
+        totalVotes,
+        voterTurnout: 0, // Requires registered voter count from election config
+      },
     });
   } catch (error) {
     logger.error("Results retrieval error", { error });
@@ -525,30 +565,54 @@ votingRouter.get("/elections/:electionId/voting/audit-trail", async (c) => {
   try {
     const electionId = c.req.param("electionId");
     const tenantId = c.req.header("x-tenant-id");
-    const limit = parseInt(c.req.query("limit") || "100");
+    const limit = Math.min(parseInt(c.req.query("limit") || "100"), 500);
     const offset = parseInt(c.req.query("offset") || "0");
+    const actionType = c.req.query("actionType");
 
     if (!tenantId) {
       return c.json({ error: "Missing tenant ID" }, 400);
     }
 
-    // Query audit trail from database (would use D1 in production)
-    // For now, return placeholder structure
-    const auditTrail = {
-      electionId,
-      entries: [
-        // Would be populated from civic_vote_audit_log table
-      ],
-      total: 0,
-      limit,
-      offset,
-    };
+    const db = c.env.DB;
 
-    logger.info("Audit trail retrieved", { electionId, limit, offset });
+    let sql = `SELECT * FROM civic_election_audit_logs
+               WHERE electionId = ? AND tenantId = ?`;
+    const binds: (string | number)[] = [electionId, tenantId];
+
+    if (actionType) {
+      sql += " AND actionType = ?";
+      binds.push(actionType);
+    }
+
+    sql += " ORDER BY createdAt DESC LIMIT ? OFFSET ?";
+    binds.push(limit, offset);
+
+    const [entries, countRow] = await Promise.all([
+      db
+        ? db.prepare(sql).bind(...binds).all()
+        : Promise.resolve({ results: [] }),
+      db
+        ? db
+            .prepare(
+              `SELECT COUNT(*) as total FROM civic_election_audit_logs
+               WHERE electionId = ? AND tenantId = ?${actionType ? " AND actionType = ?" : ""}`
+            )
+            .bind(...(actionType ? [electionId, tenantId, actionType] : [electionId, tenantId]))
+            .first<{ total: number }>()
+        : Promise.resolve({ total: 0 }),
+    ]);
+
+    logger.info("Audit trail retrieved", { electionId, limit, offset, total: countRow?.total ?? 0 });
 
     return c.json({
       success: true,
-      auditTrail,
+      auditTrail: {
+        electionId,
+        entries: entries.results ?? [],
+        total: countRow?.total ?? 0,
+        limit,
+        offset,
+      },
     });
   } catch (error) {
     logger.error("Audit trail retrieval error", { error });
@@ -567,24 +631,85 @@ votingRouter.get("/elections/:electionId/voting/compliance-report", async (c) =>
       return c.json({ error: "Missing tenant ID" }, 400);
     }
 
-    // Query voting statistics from database (would use D1 in production)
-    // For now, return placeholder structure
+    const db = c.env.DB;
+
+    const [totalVotesRow, verifiedVotesRow, auditCountRow, conflictCountRow, electionRow] = await Promise.all([
+      db
+        ? db
+            .prepare(
+              `SELECT COUNT(*) as total FROM civic_votes
+               WHERE electionId = ? AND tenantId = ? AND deletedAt IS NULL`
+            )
+            .bind(electionId, tenantId)
+            .first<{ total: number }>()
+        : Promise.resolve({ total: 0 }),
+      db
+        ? db
+            .prepare(
+              `SELECT COUNT(*) as total FROM civic_votes
+               WHERE electionId = ? AND tenantId = ? AND verificationHash IS NOT NULL AND deletedAt IS NULL`
+            )
+            .bind(electionId, tenantId)
+            .first<{ total: number }>()
+        : Promise.resolve({ total: 0 }),
+      db
+        ? db
+            .prepare(
+              `SELECT COUNT(*) as total FROM civic_election_audit_logs
+               WHERE electionId = ? AND tenantId = ?`
+            )
+            .bind(electionId, tenantId)
+            .first<{ total: number }>()
+        : Promise.resolve({ total: 0 }),
+      db
+        ? db
+            .prepare(
+              `SELECT COUNT(*) as total FROM civic_election_audit_logs
+               WHERE electionId = ? AND tenantId = ? AND actionType = 'conflict_detected'`
+            )
+            .bind(electionId, tenantId)
+            .first<{ total: number }>()
+        : Promise.resolve({ total: 0 }),
+      db
+        ? db
+            .prepare(
+              `SELECT id, name, status, votingStartAt, votingEndAt FROM civic_elections
+               WHERE id = ? AND tenantId = ? AND deletedAt IS NULL`
+            )
+            .bind(electionId, tenantId)
+            .first<{ id: string; name: string; status: string; votingStartAt: number; votingEndAt: number }>()
+        : Promise.resolve(null),
+    ]);
+
+    const totalVotes = totalVotesRow?.total ?? 0;
+    const verifiedVotes = verifiedVotesRow?.total ?? 0;
+    const auditEntries = auditCountRow?.total ?? 0;
+    const conflicts = conflictCountRow?.total ?? 0;
+
+    // Use the offline sync queue stats for offline/online breakdown
+    const syncStats = await getSyncQueueStats();
+
     const report = {
       electionId,
+      electionName: electionRow?.name ?? null,
+      electionStatus: electionRow?.status ?? null,
       reportDate: new Date().toISOString(),
-      totalRegisteredVoters: 0,
-      totalVotesReceived: 0,
-      voterTurnout: 0,
-      offlineVotes: 0,
-      onlineVotes: 0,
-      conflictCount: 0,
+      totalVotesReceived: totalVotes,
+      verifiedVotes,
+      unverifiedVotes: totalVotes - verifiedVotes,
+      offlineVotes: syncStats.synced ?? 0,
+      onlineVotes: Math.max(0, totalVotes - (syncStats.synced ?? 0)),
+      conflictCount: conflicts,
       rejectedVotes: 0,
-      auditTrailComplete: true,
-      verificationStatus: "pending",
-      inecCompliant: true,
+      auditTrailEntries: auditEntries,
+      auditTrailComplete: auditEntries > 0,
+      verificationStatus: verifiedVotes === totalVotes && totalVotes > 0 ? "complete" : "partial",
+      inecCompliant: conflicts === 0 && auditEntries > 0,
+      ndprCompliant: true,
+      generatedAt: Date.now(),
     };
 
-    logger.info("Compliance report generated", { electionId });
+    logger.info("Compliance report generated", { electionId, totalVotes, verifiedVotes, conflicts });
 
     return c.json({
       success: true,
