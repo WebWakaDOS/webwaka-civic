@@ -52,11 +52,35 @@ jobs:
       - run: npm run build || true
         env:
           NODE_ENV: production
-      - name: Apply D1 Migrations (Production)
-        run: npx wrangler d1 migrations apply webwaka-production-db --env production --remote
+
+      - name: Rename legacy civic_ tables to civc_ prefix (Production)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # Rename old-prefix tables if they exist (idempotent — || true handles "table not found")
+          for table in elections candidates votes voting_stations volunteers volunteer_tasks campaign_donations campaign_expenses campaign_materials campaign_announcements election_results volunteer_messages election_audit_logs voter_sessions ballots vote_queue vote_tallies vote_audit_log vote_conflicts voting_statistics; do
+            npx wrangler d1 execute DB --env production --remote \
+              --command "ALTER TABLE civic_${table} RENAME TO civc_${table};" 2>/dev/null || true
+          done
+          echo "✅ Legacy civic_ → civc_ rename step complete"
+
+      - name: Bootstrap DB schema 006-007 (Production)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # Run foundational migrations directly — safe with IF NOT EXISTS (idempotent)
+          npx wrangler d1 execute DB --env production --remote --file migrations/006_civ3_elections.sql || true
+          npx wrangler d1 execute DB --env production --remote --file migrations/007_civ3_voting.sql || true
+          echo "✅ Bootstrap 006-007 complete"
+
+      - name: Apply D1 Migrations (Production)
+        run: npx wrangler d1 migrations apply DB --env production --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy to Cloudflare Workers (Production)
         run: npx wrangler deploy --env production
         env:
@@ -81,11 +105,33 @@ jobs:
       - run: npm run build || true
         env:
           NODE_ENV: staging
-      - name: Apply D1 Migrations (Staging)
-        run: npx wrangler d1 migrations apply webwaka-staging-db --env staging --remote
+
+      - name: Rename legacy civic_ tables to civc_ prefix (Staging)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for table in elections candidates votes voting_stations volunteers volunteer_tasks campaign_donations campaign_expenses campaign_materials campaign_announcements election_results volunteer_messages election_audit_logs voter_sessions ballots vote_queue vote_tallies vote_audit_log vote_conflicts voting_statistics; do
+            npx wrangler d1 execute DB --env staging --remote \
+              --command "ALTER TABLE civic_${table} RENAME TO civc_${table};" 2>/dev/null || true
+          done
+          echo "✅ Legacy civic_ → civc_ rename step complete"
+
+      - name: Bootstrap DB schema 006-007 (Staging)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler d1 execute DB --env staging --remote --file migrations/006_civ3_elections.sql || true
+          npx wrangler d1 execute DB --env staging --remote --file migrations/007_civ3_voting.sql || true
+          echo "✅ Bootstrap 006-007 complete"
+
+      - name: Apply D1 Migrations (Staging)
+        run: npx wrangler d1 migrations apply DB --env staging --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy to Cloudflare Workers (Staging)
         run: npx wrangler deploy --env staging
         env:
