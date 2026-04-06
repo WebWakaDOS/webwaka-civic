@@ -155,13 +155,13 @@ describe('Frontend Components', () => {
   describe('ElectionsDashboard', () => {
     it('should render elections list', () => {
       expect(mockElections.length).toBe(2);
-      expect(mockElections[0].name).toBe('Presidential Election 2026');
+      expect(mockElections[0]!.name).toBe('Presidential Election 2026');
     });
 
     it('should filter elections by status', () => {
       const votingElections = mockElections.filter((e) => e.status === 'voting');
       expect(votingElections.length).toBe(1);
-      expect(votingElections[0].status).toBe('voting');
+      expect(votingElections[0]!.status).toBe('voting');
     });
 
     it('should search elections by name', () => {
@@ -170,23 +170,23 @@ describe('Frontend Components', () => {
         e.name.toLowerCase().includes(query.toLowerCase())
       );
       expect(results.length).toBe(1);
-      expect(results[0].name).toContain('Presidential');
+      expect(results[0]!.name).toContain('Presidential');
     });
 
     it('should display election metadata', () => {
       const election = mockElections[0];
-      expect(election.candidateCount).toBe(5);
-      expect(election.voterCount).toBe(1000);
+      expect(election!.candidateCount).toBe(5);
+      expect(election!.voterCount).toBe(1000);
     });
 
     it('should handle election selection', () => {
-      const selectedId = mockElections[0].id;
+      const selectedId = mockElections[0]!.id;
       expect(selectedId).toBe('e1');
     });
 
     it('should format election dates correctly', () => {
       const election = mockElections[0];
-      expect(election.startDate).toBeLessThan(election.endDate);
+      expect(election!.startDate).toBeLessThan(election!.endDate);
     });
   });
 
@@ -197,8 +197,8 @@ describe('Frontend Components', () => {
 
     it('should allow candidate selection', () => {
       const selectedCandidate = mockCandidates[0];
-      expect(selectedCandidate.id).toBe('c1');
-      expect(selectedCandidate.name).toBe('John Doe');
+      expect(selectedCandidate!.id).toBe('c1');
+      expect(selectedCandidate!.name).toBe('John Doe');
     });
 
     it('should prevent duplicate voting', () => {
@@ -225,24 +225,24 @@ describe('Frontend Components', () => {
 
     it('should display candidate information', () => {
       const candidate = mockCandidates[0];
-      expect(candidate.name).toBeDefined();
-      expect(candidate.party).toBeDefined();
-      expect(candidate.bio).toBeDefined();
+      expect(candidate!.name).toBeDefined();
+      expect(candidate!.party).toBeDefined();
+      expect(candidate!.bio).toBeDefined();
     });
   });
 
   describe('VolunteerBoard', () => {
     it('should display volunteer stats', () => {
       const volunteer = mockVolunteers[0];
-      expect(volunteer.points).toBe(500);
-      expect(volunteer.rank).toBe(1);
-      expect(volunteer.tasksCompleted).toBe(25);
+      expect(volunteer!.points).toBe(500);
+      expect(volunteer!.rank).toBe(1);
+      expect(volunteer!.tasksCompleted).toBe(25);
     });
 
     it('should display leaderboard', () => {
       expect(mockVolunteers.length).toBe(3);
-      expect(mockVolunteers[0].rank).toBe(1);
-      expect(mockVolunteers[1].rank).toBe(2);
+      expect(mockVolunteers[0]!.rank).toBe(1);
+      expect(mockVolunteers[1]!.rank).toBe(2);
     });
 
     it('should show available tasks', () => {
@@ -267,12 +267,12 @@ describe('Frontend Components', () => {
 
     it('should display badges', () => {
       const badgeVolunteer = mockVolunteers[0];
-      expect(badgeVolunteer.badge).toBeDefined();
+      expect(badgeVolunteer!.badge).toBeDefined();
     });
 
     it('should track streaks', () => {
       const streakVolunteer = mockVolunteers[0];
-      expect(streakVolunteer.streak).toBe(5);
+      expect(streakVolunteer!.streak).toBe(5);
     });
   });
 
@@ -320,12 +320,12 @@ describe('Frontend Components', () => {
 
     it('should track donation status', () => {
       const donation = mockDonations[0];
-      expect(donation.status).toBe('completed');
+      expect(donation!.status).toBe('completed');
     });
 
     it('should track expense status', () => {
       const expense = mockExpenses[0];
-      expect(expense.status).toBe('approved');
+      expect(expense!.status).toBe('approved');
     });
   });
 

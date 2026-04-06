@@ -53,27 +53,6 @@ export interface DocumentResult {
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
-/**
- * DocumentService — thin client that converts document generation requests
- * into platform events. The platform CORE-DOCS Worker generates PDFs/images
- * and delivers them via the configured channel.
- *
- * @example
- *   const svc = new DocumentService(c.env);
- *   await svc.requestDocument({
- *     tenantId: payload.tenantId,
- *     organizationId: payload.organizationId,
- *     template: "donation_receipt",
- *     data: {
- *       donorName: donor.name,
- *       amountKobo: donation.amountKobo,
- *       receiptNumber: donation.receiptNumber,
- *       date: donation.createdAt,
- *     },
- *     deliveryChannel: "whatsapp",
- *     recipientPhone: donor.phone,
- *   });
- */
 export class DocumentService {
   constructor(private readonly env: EventBusEnv) {}
 
@@ -82,24 +61,21 @@ export class DocumentService {
       req.idempotencyKey ??
       `doc:${req.tenantId}:${req.template}:${req.recipientPhone ?? req.recipientEmail ?? "anon"}:${Date.now()}`;
 
-    await emitEvent(
-      this.env,
-      "document.generation.requested",
-      req.tenantId,
-      {
-        organizationId: req.organizationId,
-        template: req.template,
-        data: req.data,
-        format: req.format ?? "pdf",
-        deliveryChannel: req.deliveryChannel ?? "none",
-        recipientPhone: req.recipientPhone,
-        recipientEmail: req.recipientEmail,
-        recipientName: req.recipientName,
-        locale: req.locale ?? "en",
-        idempotencyKey: key,
-        callbackEventType: req.callbackEventType,
-      }
-    );
+    const payload: Record<string, unknown> = {
+      organizationId: req.organizationId,
+      template: req.template,
+      data: req.data,
+      format: req.format ?? "pdf",
+      deliveryChannel: req.deliveryChannel ?? "none",
+      recipientName: req.recipientName,
+      locale: req.locale ?? "en",
+      idempotencyKey: key,
+    };
+    if (req.recipientPhone !== undefined) payload["recipientPhone"] = req.recipientPhone;
+    if (req.recipientEmail !== undefined) payload["recipientEmail"] = req.recipientEmail;
+    if (req.callbackEventType !== undefined) payload["callbackEventType"] = req.callbackEventType;
+
+    await emitEvent(this.env, "document.generation.requested", req.tenantId, payload);
 
     return { queued: true, idempotencyKey: key };
   }
@@ -116,7 +92,7 @@ export class DocumentService {
     organizationName: string;
     locale?: "en" | "yo" | "ig" | "ha";
   }): Promise<DocumentResult> {
-    return this.requestDocument({
+    const req: DocumentRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
       template: "donation_receipt",
@@ -128,11 +104,12 @@ export class DocumentService {
         organizationName: opts.organizationName,
       },
       deliveryChannel: opts.donorPhone ? "whatsapp" : opts.donorEmail ? "email" : "none",
-      recipientPhone: opts.donorPhone,
-      recipientEmail: opts.donorEmail,
       recipientName: opts.donorName,
-      locale: opts.locale,
-    });
+    };
+    if (opts.donorPhone !== undefined) req.recipientPhone = opts.donorPhone;
+    if (opts.donorEmail !== undefined) req.recipientEmail = opts.donorEmail;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestDocument(req);
   }
 
   async requestMemberIdCard(opts: {
@@ -147,23 +124,24 @@ export class DocumentService {
     locale?: "en" | "yo" | "ig" | "ha";
     cardType?: "member_id_card" | "party_id_card";
   }): Promise<DocumentResult> {
-    return this.requestDocument({
+    const req: DocumentRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
       template: opts.cardType ?? "member_id_card",
       data: {
         memberName: opts.memberName,
         membershipNumber: opts.membershipNumber,
-        photoUrl: opts.photoUrl,
         organizationName: opts.organizationName,
-        expiresAt: opts.expiresAt,
+        ...(opts.photoUrl !== undefined && { photoUrl: opts.photoUrl }),
+        ...(opts.expiresAt !== undefined && { expiresAt: opts.expiresAt }),
       },
       format: "png",
       deliveryChannel: opts.memberPhone ? "whatsapp" : "none",
-      recipientPhone: opts.memberPhone,
       recipientName: opts.memberName,
-      locale: opts.locale,
-    });
+    };
+    if (opts.memberPhone !== undefined) req.recipientPhone = opts.memberPhone;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestDocument(req);
   }
 
   async requestDuesReceipt(opts: {
@@ -177,7 +155,7 @@ export class DocumentService {
     organizationName: string;
     locale?: "en" | "yo" | "ig" | "ha";
   }): Promise<DocumentResult> {
-    return this.requestDocument({
+    const req: DocumentRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
       template: "dues_receipt",
@@ -189,10 +167,11 @@ export class DocumentService {
         organizationName: opts.organizationName,
       },
       deliveryChannel: opts.memberPhone ? "whatsapp" : "none",
-      recipientPhone: opts.memberPhone,
       recipientName: opts.memberName,
-      locale: opts.locale,
-    });
+    };
+    if (opts.memberPhone !== undefined) req.recipientPhone = opts.memberPhone;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestDocument(req);
   }
 
   async requestVoterCertificate(opts: {
@@ -205,7 +184,7 @@ export class DocumentService {
     verificationCode: string;
     locale?: "en" | "yo" | "ig" | "ha";
   }): Promise<DocumentResult> {
-    return this.requestDocument({
+    const req: DocumentRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
       template: "voter_certificate",
@@ -217,10 +196,11 @@ export class DocumentService {
       },
       format: "pdf",
       deliveryChannel: opts.voterPhone ? "whatsapp" : "none",
-      recipientPhone: opts.voterPhone,
       recipientName: opts.voterName,
-      locale: opts.locale,
-    });
+    };
+    if (opts.voterPhone !== undefined) req.recipientPhone = opts.voterPhone;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestDocument(req);
   }
 
   async requestGrantLetter(opts: {
@@ -234,7 +214,7 @@ export class DocumentService {
     organizationName: string;
     locale?: "en" | "yo" | "ig" | "ha";
   }): Promise<DocumentResult> {
-    return this.requestDocument({
+    const req: DocumentRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
       template: "grant_letter",
@@ -246,10 +226,11 @@ export class DocumentService {
         organizationName: opts.organizationName,
       },
       deliveryChannel: opts.recipientEmail ? "email" : "none",
-      recipientEmail: opts.recipientEmail,
       recipientName: opts.recipientName,
-      locale: opts.locale,
-    });
+    };
+    if (opts.recipientEmail !== undefined) req.recipientEmail = opts.recipientEmail;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestDocument(req);
   }
 }
 

@@ -91,6 +91,7 @@ import { MIGRATION_SQL } from "../../../core/db/schema";
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
+type R2Bucket = { put: (...a: unknown[]) => Promise<unknown>; get: (...a: unknown[]) => Promise<unknown>; delete: (...a: unknown[]) => Promise<unknown> };
 interface Env extends EventBusEnv {
   DB: D1Database;
   STORAGE: R2Bucket;
@@ -101,6 +102,7 @@ interface Env extends EventBusEnv {
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 const app = new Hono<{ Bindings: Env }>();
+const logger = createLogger("church-ngo");
 
 // ─── Auth Middleware ──────────────────────────────────────────────────────────
 
@@ -351,8 +353,8 @@ app.post("/api/civic/departments", async (c) => {
     tenantId: payload.tenantId,
     organizationId: payload.organizationId,
     name: body.name,
-    description: body.description,
-    leaderId: body.leaderId,
+    ...(body.description !== undefined && { description: body.description }),
+    ...(body.leaderId !== undefined && { leaderId: body.leaderId }),
     createdAt: nowMs(),
     updatedAt: nowMs(),
   };
@@ -461,34 +463,34 @@ app.post("/api/civic/members", async (c) => {
       id: generateId(),
       tenantId: payload.tenantId,
       organizationId: payload.organizationId,
-      memberNumber: body.memberNumber,
       firstName: body.firstName,
       lastName: body.lastName,
-      otherNames: body.otherNames,
-      email: body.email,
-      phone: body.phone,
-      dateOfBirth: body.dateOfBirth,
-      gender: body.gender,
-      address: body.address,
-      city: body.city,
-      state: body.state,
       country: body.country ?? "NG",
-      occupation: body.occupation,
-      employer: body.employer,
-      maritalStatus: body.maritalStatus,
-      spouseName: body.spouseName,
       numberOfChildren: body.numberOfChildren ?? 0,
-      departmentId: body.departmentId,
-      memberStatus: body.memberStatus ?? "active",
-      discipleshipLevel: body.discipleshipLevel ?? "new_convert",
+      memberStatus: (body.memberStatus as import("../../../core/db/schema").MemberStatus | undefined) ?? "active",
+      discipleshipLevel: (body.discipleshipLevel as import("../../../core/db/schema").DiscipleshipLevel | undefined) ?? "new_convert",
       joinedAt: body.joinedAt ?? nowMs(),
-      baptismDate: body.baptismDate,
       ndprConsent: body.ndprConsent ?? 0,
-      ndprConsentDate: body.ndprConsentDate,
-      photoUrl: body.photoUrl,
-      notes: body.notes,
       createdAt: nowMs(),
       updatedAt: nowMs(),
+      ...(body.memberNumber !== undefined && { memberNumber: body.memberNumber }),
+      ...(body.otherNames !== undefined && { otherNames: body.otherNames }),
+      ...(body.email !== undefined && { email: body.email }),
+      ...(body.phone !== undefined && { phone: body.phone }),
+      ...(body.dateOfBirth !== undefined && { dateOfBirth: body.dateOfBirth }),
+      ...(body.gender !== undefined && { gender: body.gender }),
+      ...(body.address !== undefined && { address: body.address }),
+      ...(body.city !== undefined && { city: body.city }),
+      ...(body.state !== undefined && { state: body.state }),
+      ...(body.occupation !== undefined && { occupation: body.occupation }),
+      ...(body.employer !== undefined && { employer: body.employer }),
+      ...(body.maritalStatus !== undefined && { maritalStatus: body.maritalStatus }),
+      ...(body.spouseName !== undefined && { spouseName: body.spouseName }),
+      ...(body.departmentId !== undefined && { departmentId: body.departmentId }),
+      ...(body.baptismDate !== undefined && { baptismDate: body.baptismDate }),
+      ...(body.ndprConsentDate !== undefined && { ndprConsentDate: body.ndprConsentDate }),
+      ...(body.photoUrl !== undefined && { photoUrl: body.photoUrl }),
+      ...(body.notes !== undefined && { notes: body.notes }),
     };
 
     await createMember(c.env.DB, member);
@@ -502,28 +504,30 @@ app.post("/api/civic/members", async (c) => {
     // T001: E03 — send welcome notification via platform CORE-COMMS
     if (member.phone || member.email) {
       const notifSvc = createNotificationService(c.env);
-      await notifSvc.sendWelcome(c.env, {
+      const welcomeOpts: Parameters<typeof notifSvc.sendWelcome>[1] = {
         tenantId: payload.tenantId,
         organizationId: payload.organizationId,
-        recipientPhone: member.phone,
-        recipientEmail: member.email,
         name: member.firstName,
         membershipNumber: member.id,
-      }).catch((e) => logger.error("Welcome notification failed", { error: String(e) }));
+      };
+      if (member.phone !== undefined) welcomeOpts.recipientPhone = member.phone;
+      if (member.email !== undefined) welcomeOpts.recipientEmail = member.email;
+      await notifSvc.sendWelcome(c.env, welcomeOpts).catch((e) => logger.error("Welcome notification failed", { error: String(e) }));
     }
 
     // Phase 6: generate member ID card document via CORE-DOCS
     const docSvc = createDocumentService(c.env);
-    docSvc.requestMemberIdCard({
+    const idCardOpts: Parameters<typeof docSvc.requestMemberIdCard>[0] = {
       tenantId: payload.tenantId,
       organizationId: payload.organizationId,
       memberName: `${member.firstName} ${member.lastName}`,
-      memberPhone: member.phone,
       membershipNumber: member.id,
-      photoUrl: member.photoUrl,
       organizationName: payload.organizationId,
       cardType: "member_id_card",
-    }).catch((e) => logger.error("Member ID card generation failed", { error: String(e) }));
+    };
+    if (member.phone !== undefined) idCardOpts.memberPhone = member.phone;
+    if (member.photoUrl !== undefined) idCardOpts.photoUrl = member.photoUrl;
+    docSvc.requestMemberIdCard(idCardOpts).catch((e) => logger.error("Member ID card generation failed", { error: String(e) }));
 
     logger.info("Member registered", { memberId: member.id });
     return apiSuccess(member);
@@ -590,14 +594,19 @@ app.get("/api/civic/donations", async (c) => {
 
   try {
     const url = new URL(c.req.url);
-    const filters = {
-      donationType: url.searchParams.get("donationType") ?? undefined,
-      memberId: url.searchParams.get("memberId") ?? undefined,
-      startDate: url.searchParams.get("startDate") ? Number(url.searchParams.get("startDate")) : undefined,
-      endDate: url.searchParams.get("endDate") ? Number(url.searchParams.get("endDate")) : undefined,
-      limit: url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : undefined,
-      offset: url.searchParams.get("offset") ? Number(url.searchParams.get("offset")) : undefined,
-    };
+    const filters: Record<string, string | number> = {};
+    const donationTypeParam = url.searchParams.get("donationType");
+    const memberIdParam = url.searchParams.get("memberId");
+    const startDateParam = url.searchParams.get("startDate");
+    const endDateParam = url.searchParams.get("endDate");
+    const limitParam = url.searchParams.get("limit");
+    const offsetParam = url.searchParams.get("offset");
+    if (donationTypeParam) filters["donationType"] = donationTypeParam;
+    if (memberIdParam) filters["memberId"] = memberIdParam;
+    if (startDateParam) filters["startDate"] = Number(startDateParam);
+    if (endDateParam) filters["endDate"] = Number(endDateParam);
+    if (limitParam) filters["limit"] = Number(limitParam);
+    if (offsetParam) filters["offset"] = Number(offsetParam);
 
     const donations = await getDonationsByOrg(
       c.env.DB,
@@ -659,7 +668,7 @@ app.post("/api/civic/donations", async (c) => {
   }
 
   try {
-    const body = await c.req.json<Partial<CivicDonation>>();
+    const body = await c.req.json<Partial<CivicDonation> & { customerPhone?: string; customerEmail?: string; customerName?: string }>();
 
     if (!body.amountKobo || body.amountKobo <= 0) {
       return apiError("amountKobo must be a positive integer");
@@ -672,19 +681,20 @@ app.post("/api/civic/donations", async (c) => {
       id: generateId(),
       tenantId: payload.tenantId,
       organizationId: payload.organizationId,
-      memberId: body.memberId,
       donationType: body.donationType,
       amountKobo: body.amountKobo,
-      currency: body.currency ?? "NGN",
-      description: body.description,
+      currency: (body.currency as import("../../../core/db/schema").Currency | undefined) ?? "NGN",
       receiptNumber: body.receiptNumber ?? `RCT-${Date.now()}`,
       paymentMethod: body.paymentMethod ?? "cash",
-      paymentReference: body.paymentReference,
-      eventId: body.eventId,
       recordedBy: payload.sub,
       donationDate: body.donationDate ?? nowMs(),
+      paymentStatus: "pending",
       createdAt: nowMs(),
       updatedAt: nowMs(),
+      ...(body.memberId !== undefined && { memberId: body.memberId }),
+      ...(body.description !== undefined && { description: body.description }),
+      ...(body.paymentReference !== undefined && { paymentReference: body.paymentReference }),
+      ...(body.eventId !== undefined && { eventId: body.eventId }),
     };
 
     await createDonation(c.env.DB, donation);
@@ -700,11 +710,9 @@ app.post("/api/civic/donations", async (c) => {
     // T001: E03 — donation receipt notification
     if (body.customerPhone || body.customerEmail) {
       const notifSvc = createNotificationService(c.env);
-      await notifSvc.requestNotification({
+      const notifReq: import("../../../core/services/notifications").NotificationRequest = {
         tenantId: payload.tenantId,
         organizationId: payload.organizationId,
-        recipientPhone: body.customerPhone as string | undefined,
-        recipientEmail: body.customerEmail as string | undefined,
         channel: body.customerPhone ? "whatsapp" : "email",
         templateId: "donation.receipt",
         data: {
@@ -714,31 +722,34 @@ app.post("/api/civic/donations", async (c) => {
         },
         priority: "high",
         idempotencyKey: `donation-receipt:${donation.id}`,
-      }).catch((e) => logger.error("Donation receipt notification failed", { error: String(e) }));
+      };
+      if (body.customerPhone !== undefined) notifReq.recipientPhone = body.customerPhone as string;
+      if (body.customerEmail !== undefined) notifReq.recipientEmail = body.customerEmail as string;
+      await notifSvc.requestNotification(notifReq).catch((e) => logger.error("Donation receipt notification failed", { error: String(e) }));
 
       // Phase 6: generate donation receipt PDF via CORE-DOCS
       const docSvc = createDocumentService(c.env);
-      docSvc.requestDonationReceipt({
+      const receiptOpts: Parameters<typeof docSvc.requestDonationReceipt>[0] = {
         tenantId: payload.tenantId,
         organizationId: payload.organizationId,
         donorName: (body.customerName as string | undefined) ?? "Donor",
-        donorPhone: body.customerPhone as string | undefined,
-        donorEmail: body.customerEmail as string | undefined,
         amountKobo: donation.amountKobo,
         receiptNumber: donation.receiptNumber ?? donation.id,
         donationDate: donation.donationDate,
         organizationName: payload.organizationId,
-      }).catch((e) => logger.error("Donation receipt PDF generation failed", { error: String(e) }));
+      };
+      if (body.customerPhone !== undefined) receiptOpts.donorPhone = body.customerPhone as string;
+      if (body.customerEmail !== undefined) receiptOpts.donorEmail = body.customerEmail as string;
+      docSvc.requestDonationReceipt(receiptOpts).catch((e) => logger.error("Donation receipt PDF generation failed", { error: String(e) }));
     }
 
     if (donation.paymentMethod === "paystack" && body.customerEmail) {
       const paySvc = createPaymentService(c.env);
-      await paySvc.initializePayment({
+      const payInitReq: Parameters<typeof paySvc.initializePayment>[0] = {
         tenantId: payload.tenantId,
         organizationId: payload.organizationId,
         amountKobo: donation.amountKobo,
         customerEmail: body.customerEmail as string,
-        customerPhone: body.customerPhone as string | undefined,
         category: "donation",
         referenceId: donation.id,
         metadata: {
@@ -746,7 +757,9 @@ app.post("/api/civic/donations", async (c) => {
           memberId: donation.memberId,
           receiptNumber: donation.receiptNumber,
         },
-      });
+      };
+      if (body.customerPhone !== undefined) payInitReq.customerPhone = body.customerPhone as string;
+      await paySvc.initializePayment(payInitReq);
     }
 
     logger.info("Donation recorded", { donationId: donation.id, amountKobo: donation.amountKobo });
@@ -799,7 +812,9 @@ app.post("/api/civic/donations/bulk-sync", async (c) => {
         ).bind(payload.tenantId, `%${item.offlineId}%`).first<{ id: string }>();
 
         if (existing) {
-          results.push({ id: existing.id, offlineId: item.offlineId, status: "skipped" });
+          const skippedResult: { id: string; offlineId?: string; status: "created" | "skipped" } = { id: existing.id, status: "skipped" };
+          if (item.offlineId !== undefined) skippedResult.offlineId = item.offlineId;
+          results.push(skippedResult);
           continue;
         }
       }
@@ -808,23 +823,24 @@ app.post("/api/civic/donations/bulk-sync", async (c) => {
         id: generateId(),
         tenantId: payload.tenantId,
         organizationId: payload.organizationId,
-        memberId: item.memberId ?? undefined,
         donationType: item.donationType as CivicDonation["donationType"],
         amountKobo: item.amountKobo,
         currency: "NGN",
-        description: item.offlineId ? `offline:${item.offlineId}` : undefined,
         receiptNumber: `RCT-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
         paymentMethod: (item.paymentMethod ?? "cash") as CivicDonation["paymentMethod"],
         paymentStatus: "success",
-        notes: item.notes,
         recordedBy: payload.sub,
         donationDate: item.donationDate ?? nowMs(),
         createdAt: nowMs(),
         updatedAt: nowMs(),
+        ...(item.memberId !== undefined && { memberId: item.memberId }),
+        ...(item.offlineId ? { description: `offline:${item.offlineId}` } : {}),
       };
 
       await createDonation(c.env.DB, donation);
-      results.push({ id: donation.id, offlineId: item.offlineId, status: "created" });
+      const pushResult: { id: string; offlineId?: string; status: "created" | "skipped" } = { id: donation.id, status: "created" };
+      if (item.offlineId !== undefined) pushResult.offlineId = item.offlineId;
+      results.push(pushResult);
     }
 
     const created = results.filter((r) => r.status === "created").length;
@@ -885,12 +901,12 @@ app.post("/api/civic/pledges", async (c) => {
       description: body.description,
       totalAmountKobo: body.totalAmountKobo,
       paidAmountKobo: 0,
-      currency: body.currency ?? "NGN",
+      currency: (body.currency as import("../../../core/db/schema").Currency | undefined) ?? "NGN",
       pledgeStatus: "active",
       pledgeDate: body.pledgeDate ?? nowMs(),
-      dueDate: body.dueDate,
       createdAt: nowMs(),
       updatedAt: nowMs(),
+      ...(body.dueDate !== undefined && { dueDate: body.dueDate }),
     };
 
     await createPledge(c.env.DB, pledge);
@@ -1091,7 +1107,7 @@ app.post("/api/civic/events/:id/attendance", async (c) => {
       return apiError("Either memberId or guestName is required");
     }
 
-    const attendance: CivicAttendance = {
+    const attendance = {
       id: generateId(),
       tenantId: payload.tenantId,
       organizationId: payload.organizationId,
@@ -1102,7 +1118,7 @@ app.post("/api/civic/events/:id/attendance", async (c) => {
       checkedInBy: payload.sub,
       createdAt: nowMs(),
       updatedAt: nowMs(),
-    };
+    } as CivicAttendance;
 
     await recordAttendance(c.env.DB, attendance);
 
@@ -1179,7 +1195,7 @@ app.post("/api/civic/grants", async (c) => {
       return apiError("totalAmountKobo must be a positive integer");
     }
 
-    const grant: CivicGrant = {
+    const grant = {
       id: generateId(),
       tenantId: payload.tenantId,
       organizationId: payload.organizationId,
@@ -1195,7 +1211,7 @@ app.post("/api/civic/grants", async (c) => {
       createdBy: payload.sub,
       createdAt: nowMs(),
       updatedAt: nowMs(),
-    };
+    } as CivicGrant;
 
     await createGrant(c.env.DB, grant);
     logger.info("Grant created", { grantId: grant.id });
@@ -1268,7 +1284,7 @@ app.post("/api/civic/expenses", async (c) => {
   if (body.amountKobo <= 0) {
     return apiError("amountKobo must be a positive integer");
   }
-  const expense: CivicExpense = {
+  const expense = {
     id: generateId(),
     tenantId: payload.tenantId,
     organizationId: payload.organizationId,
@@ -1284,7 +1300,7 @@ app.post("/api/civic/expenses", async (c) => {
     notes: body.notes,
     createdAt: nowMs(),
     updatedAt: nowMs(),
-  };
+  } as CivicExpense;
   await createExpense(c.env.DB, expense);
   await emitEvent(c.env, "expense.recorded", payload.tenantId, {
     organizationId: payload.organizationId,
@@ -1358,7 +1374,7 @@ app.post("/api/civic/budgets", async (c) => {
   if (body.amountKobo <= 0) {
     return apiError("amountKobo must be a positive integer");
   }
-  const budget: CivicBudget = {
+  const budget = {
     id: generateId(),
     tenantId: payload.tenantId,
     organizationId: payload.organizationId,
@@ -1371,7 +1387,7 @@ app.post("/api/civic/budgets", async (c) => {
     notes: body.notes,
     createdAt: nowMs(),
     updatedAt: nowMs(),
-  };
+  } as CivicBudget;
   await createBudget(c.env.DB, budget);
   logger.info("Budget entry created", { id: budget.id, year: budget.year, category: budget.category, tenantId: payload.tenantId });
   return apiSuccess(budget);

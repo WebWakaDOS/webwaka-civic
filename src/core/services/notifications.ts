@@ -36,54 +36,35 @@ export interface NotificationResult {
 
 // ─── Service ──────────────────────────────────────────────────────────────────
 
-/**
- * NotificationService — thin client that converts notification requests
- * into platform events. The platform CORE-COMMS Worker handles actual delivery.
- *
- * @example
- *   const svc = new NotificationService(c.env);
- *   await svc.requestNotification({
- *     tenantId: payload.tenantId,
- *     organizationId: payload.organizationId,
- *     recipientPhone: member.phone,
- *     channel: "whatsapp",
- *     templateId: "member.welcome",
- *     data: { name: member.firstName },
- *   });
- */
 export class NotificationService {
   constructor(private readonly env: EventBusEnv) {}
 
-  async requestNotification(
-    req: NotificationRequest
-  ): Promise<NotificationResult> {
+  async requestNotification(req: NotificationRequest): Promise<NotificationResult> {
     const key =
       req.idempotencyKey ??
       `notif:${req.tenantId}:${req.templateId}:${req.recipientPhone ?? req.recipientEmail ?? req.recipientUserId ?? "anon"}:${Date.now()}`;
 
-    await emitEvent(
-      this.env,
-      "notification.requested",
-      req.tenantId,
-      {
-        organizationId: req.organizationId,
-        recipientUserId: req.recipientUserId,
-        recipientPhone: req.recipientPhone,
-        recipientEmail: req.recipientEmail,
-        channel: req.channel,
-        templateId: req.templateId,
-        data: req.data,
-        priority: req.priority ?? "normal",
-        idempotencyKey: key,
-        locale: req.locale ?? "en",
-      }
-    );
+    const payload: Record<string, unknown> = {
+      organizationId: req.organizationId,
+      channel: req.channel,
+      templateId: req.templateId,
+      data: req.data,
+      priority: req.priority ?? "normal",
+      idempotencyKey: key,
+      locale: req.locale ?? "en",
+    };
+    // Only set optional fields when they have actual values (exactOptionalPropertyTypes safe)
+    if (req.recipientUserId !== undefined) payload["recipientUserId"] = req.recipientUserId;
+    if (req.recipientPhone !== undefined) payload["recipientPhone"] = req.recipientPhone;
+    if (req.recipientEmail !== undefined) payload["recipientEmail"] = req.recipientEmail;
+
+    await emitEvent(this.env, "notification.requested", req.tenantId, payload);
 
     return { queued: true, idempotencyKey: key };
   }
 
   async sendWelcome(
-    env: EventBusEnv,
+    _env: EventBusEnv,
     opts: {
       tenantId: string;
       organizationId: string;
@@ -94,20 +75,18 @@ export class NotificationService {
       locale?: "en" | "yo" | "ig" | "ha";
     }
   ): Promise<NotificationResult> {
-    return this.requestNotification({
+    const req: NotificationRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
-      recipientPhone: opts.recipientPhone,
-      recipientEmail: opts.recipientEmail,
       channel: opts.recipientPhone ? "whatsapp" : "email",
       templateId: "member.welcome",
-      data: {
-        name: opts.name,
-        membershipNumber: opts.membershipNumber,
-      },
+      data: { name: opts.name, membershipNumber: opts.membershipNumber },
       priority: "high",
-      locale: opts.locale,
-    });
+    };
+    if (opts.recipientPhone !== undefined) req.recipientPhone = opts.recipientPhone;
+    if (opts.recipientEmail !== undefined) req.recipientEmail = opts.recipientEmail;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestNotification(req);
   }
 
   async sendDuesReminder(opts: {
@@ -119,20 +98,17 @@ export class NotificationService {
     amountKobo: number;
     locale?: "en" | "yo" | "ig" | "ha";
   }): Promise<NotificationResult> {
-    return this.requestNotification({
+    const req: NotificationRequest = {
       tenantId: opts.tenantId,
       organizationId: opts.organizationId,
-      recipientPhone: opts.recipientPhone,
       channel: "sms",
       templateId: "dues.reminder",
-      data: {
-        name: opts.name,
-        year: opts.year,
-        amountKobo: opts.amountKobo,
-      },
+      data: { name: opts.name, year: opts.year, amountKobo: opts.amountKobo },
       priority: "normal",
-      locale: opts.locale,
-    });
+    };
+    if (opts.recipientPhone !== undefined) req.recipientPhone = opts.recipientPhone;
+    if (opts.locale !== undefined) req.locale = opts.locale;
+    return this.requestNotification(req);
   }
 }
 

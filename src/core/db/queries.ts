@@ -1102,8 +1102,13 @@ export async function getPartyMembersByOrg(
     db.prepare(`SELECT COUNT(*) as count FROM party_members WHERE ${where}`).bind(...params),
     db.prepare(`SELECT * FROM party_members WHERE ${where} ORDER BY lastName, firstName LIMIT ? OFFSET ?`).bind(...params, limit, offset),
   ]);
-  const total = (countResult.results[0] as { count: number })?.count ?? 0;
-  return { members: membersResult.results as PartyMember[], total };
+  const total = countResult !== undefined && countResult !== null
+    ? ((countResult.results[0] as { count: number } | undefined)?.count ?? 0)
+    : 0;
+  const members = membersResult !== undefined && membersResult !== null
+    ? (membersResult.results as PartyMember[])
+    : [];
+  return { members, total };
 }
 
 export async function getPartyMemberById(

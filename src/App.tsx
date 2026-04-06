@@ -319,7 +319,7 @@ export default function App() {
     return (
       <>
         {activeModule === "civ1" && <ChurchNGOApp />}
-        {activeModule === "civ2" && <PartyApp />}
+        {activeModule === "civ2" && <PartyApp apiBaseUrl={window.location.origin} token={sessionStorage.getItem(MODULE_INFO["civ2"].tokenKey) ?? ""} organizationId={sessionStorage.getItem("webwaka_tenant_civ2") ?? ""} />}
         {activeModule === "civ3" && (
           <ElectionsApp
             tenantId={sessionStorage.getItem(`webwaka_tenant_civ3`) ?? ""}

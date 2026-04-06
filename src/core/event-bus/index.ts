@@ -75,6 +75,8 @@ export const CIVIC_EVENTS = {
   MEMBER_DEACTIVATED: "civic.member.deactivated" as CivicEventType,
   DONATION_RECEIVED: "civic.donation.received" as CivicEventType,
   DONATION_RECORDED: "civic.donation.recorded" as CivicEventType,
+  PLEDGE_CREATED: "civic.pledge.created" as CivicEventType,
+  EVENT_CREATED: "civic.event.created" as CivicEventType,
   GRANT_APPROVED: "civic.grant.approved" as CivicEventType,
   GRANT_DISBURSED: "civic.grant.disbursed" as CivicEventType,
   ELECTION_CREATED: "election.created" as CivicEventType,
@@ -160,15 +162,104 @@ export function createCivicEvent<T = Record<string, unknown>>(
   return { id: generateEventId(), tenantId, type, sourceModule: "civic", timestamp: Date.now(), payload };
 }
 
-/** @deprecated Legacy compatibility — EventBus class used in old code. Use publishEvent() instead. */
+/** EventBus — civic event emitter. Supports both CF Queues and HTTP endpoint publishing. */
 export class EventBus {
-  constructor(private readonly queue?: EventQueue | null) {}
-  async publish(eventType: CivicEventType, tenantId: string, organizationId: string, payload: Record<string, unknown>): Promise<boolean> {
+  constructor(
+    private readonly queue: EventQueue | null | undefined = null,
+    private readonly eventBusUrl?: string,
+    private readonly eventBusToken?: string,
+    private readonly fetchFn: typeof fetch = fetch,
+  ) {}
+
+  async publish(
+    eventType: CivicEventType,
+    tenantId: string,
+    organizationId: string,
+    payload: Record<string, unknown>
+  ): Promise<boolean> {
     const event = createCivicEvent(tenantId, eventType, { ...payload, organizationId });
-    await publishEvent(this.queue ?? null, event);
-    return true;
+
+    // If CF Queue is bound, use it
+    if (this.queue) {
+      await this.queue.send(event);
+      return true;
+    }
+
+    // If EVENT_BUS_URL is set, POST via HTTP
+    if (this.eventBusUrl) {
+      try {
+        const body: Record<string, unknown> = {
+          event: eventType,
+          tenantId,
+          payload: { ...payload, organizationId },
+          timestamp: Date.now(),
+        };
+        const res = await this.fetchFn(this.eventBusUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(this.eventBusToken ? { Authorization: `Bearer ${this.eventBusToken}` } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    }
+
+    // No queue and no URL — fall back to in-memory bus, return false (no external emission)
+    await eventBus.publish(event);
+    return false;
   }
+
   subscribe(eventType: string, handler: EventHandler): void {
     eventBus.subscribe(eventType, handler);
   }
 }
+
+// ─── Legacy compatibility exports ─────────────────────────────────────────────
+// Several modules import EventBusEnv and createEventBus from here.
+// We re-export the canonical EventBusEnv from @webwaka/core and extend it
+// with Civic-specific bindings so all call sites remain compatible.
+import type { EventBusEnv as CoreEventBusEnv } from "@webwaka/core";
+
+/** Cloudflare Worker environment bindings for the Civic event queue.
+ *  Extends the core EventBusEnv (EVENTS KV + EVENT_BUS_URL) with
+ *  Civic-specific CF Queue bindings.
+ */
+export interface EventBusEnv extends CoreEventBusEnv {
+  CIVIC_EVENTS?: EventQueue;
+  PARTY_EVENTS?: EventQueue;
+  JWT_SECRET?: string;
+  PAYSTACK_SECRET?: string;
+}
+
+/**
+ * Factory that creates an EventBus instance.
+ * Accepts an optional custom fetch function (for testing).
+ * When EVENT_BUS_URL is set in env, publish() POSTs events via HTTP.
+ * Returns false from publish() when EVENT_BUS_URL is not set.
+ */
+export function createEventBus(
+  env: EventBusEnv & { EVENT_BUS_URL?: string; EVENT_BUS_TOKEN?: string },
+  fetchFn: typeof fetch = fetch
+): EventBus {
+  const queue = env.CIVIC_EVENTS ?? env.PARTY_EVENTS ?? null;
+  return new EventBus(queue, env.EVENT_BUS_URL, env.EVENT_BUS_TOKEN, fetchFn);
+}
+
+// Party-specific event name constants (used by political-party module)
+export const PARTY_EVENTS = {
+  MEMBER_REGISTERED: "party.member.registered" as CivicEventType,
+  MEMBER_SUSPENDED: "party.member.suspended" as CivicEventType,
+  MEMBER_EXPELLED: "party.member.expelled" as CivicEventType,
+  DUES_PAID: "party.dues.paid" as CivicEventType,
+  DUES_OVERDUE: "party.dues.overdue" as CivicEventType,
+  POSITION_ASSIGNED: "party.position.assigned" as CivicEventType,
+  MEETING_SCHEDULED: "party.meeting.scheduled" as CivicEventType,
+  ID_CARD_ISSUED: "party.id_card.issued" as CivicEventType,
+  ID_CARD_REVOKED: "party.id_card.revoked" as CivicEventType,
+  STRUCTURE_CREATED: "party.structure.created" as CivicEventType,
+  ANNOUNCEMENT_PUBLISHED: "party.announcement.published" as CivicEventType,
+} as const;

@@ -100,3 +100,120 @@ async function streamToText(stream: ReadableStream<Uint8Array>): Promise<string>
   return result;
 }
 
+
+// ─── Civic-specific AI types and triageReport ─────────────────────────────────
+
+/** Minimal type for the Cloudflare Workers AI binding */
+export interface WorkersAIBinding {
+  run(model: string, inputs: Record<string, unknown>): Promise<unknown>;
+}
+
+/** Environment expected by triageReport */
+export interface AIEnv {
+  AI?: WorkersAIBinding;
+  AI_PLATFORM_URL?: string;
+  AI_PLATFORM_TOKEN?: string;
+}
+
+/** Categories the AI triage can assign */
+export const REPORT_CATEGORIES = [
+  "Infrastructure",
+  "Security",
+  "Health",
+  "Environment",
+  "Governance",
+  "Education",
+  "Social",
+  "Sanitation",
+  "Other",
+] as const;
+
+export type ReportCategory = typeof REPORT_CATEGORIES[number];
+
+export interface TriageResult {
+  category: ReportCategory;
+  confidence: number;
+  notes: string;
+  isFallback: boolean;
+  provider?: "cloudflare" | "ai-platform" | "fallback";
+}
+
+const TRIAGE_PROMPT_PREFIX = `You are a civic issue classification assistant. Given a citizen's report description, classify it into exactly one of these categories: Infrastructure, Security, Health, Environment, Governance, Education, Social, Other.
+
+Respond ONLY with valid JSON in this exact format:
+{"category": "Infrastructure", "confidence": 0.95, "notes": "Brief reason"}
+
+Report description: `;
+
+/**
+ * Classify a citizen report description using AI.
+ * Tries CF Workers AI binding first (via env.AI), then falls back to AI platform HTTP, then returns a safe fallback.
+ * Never throws — failure is non-blocking.
+ */
+export async function triageReport(
+  env: AIEnv,
+  description: string
+): Promise<TriageResult> {
+  const prompt = `${TRIAGE_PROMPT_PREFIX}${description}`;
+
+  // 1. Try Cloudflare Workers AI binding
+  if (env.AI) {
+    try {
+      const rawResponse = await env.AI.run("@cf/meta/llama-3-8b-instruct", {
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 128,
+        temperature: 0.1,
+      }) as { response?: string } | undefined;
+
+      const text = (rawResponse as { response?: string })?.response ?? "";
+      const parsed = parseTriageResponse(text);
+      if (parsed) {
+        logger.info("AI triage via CF Workers AI", { category: parsed.category });
+        return { ...parsed, isFallback: false, provider: "cloudflare" as const };
+      }
+    } catch (err) {
+      logger.warn("CF Workers AI triage failed", { error: String(err) });
+    }
+  }
+
+  // 2. Try webwaka-ai-platform HTTP
+  if (env.AI_PLATFORM_URL && env.AI_PLATFORM_TOKEN) {
+    try {
+      const completion = await getAICompletion(env, { prompt, maxTokens: 128, temperature: 0.1 });
+      if (!completion.isFallback) {
+        const parsed = parseTriageResponse(completion.text);
+        if (parsed) {
+          logger.info("AI triage via AI platform", { category: parsed.category });
+          return { ...parsed, isFallback: false, provider: "ai-platform" as const };
+        }
+      }
+    } catch (err) {
+      logger.warn("AI platform triage failed", { error: String(err) });
+    }
+  }
+
+  // 3. Fallback — no AI available
+  logger.info("AI triage fallback — no AI provider configured");
+  return {
+    category: "Other",
+    confidence: 0.0,
+    notes: "AI triage unavailable — manual review required.",
+    isFallback: true,
+    provider: "fallback" as const,
+  };
+}
+
+function parseTriageResponse(text: string): Omit<TriageResult, "isFallback"> | null {
+  try {
+    // Extract JSON from text (may have surrounding whitespace/markdown)
+    const jsonMatch = text.match(/\{[^}]+\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]) as { category?: string; confidence?: number; notes?: string };
+    const category = REPORT_CATEGORIES.find((c) => c === parsed.category) ?? "Other";
+    const confidence = Math.min(1, Math.max(0, Number(parsed.confidence ?? 0)));
+    const notes = String(parsed.notes ?? "");
+    return { category, confidence, notes };
+  } catch {
+    return null;
+  }
+}
