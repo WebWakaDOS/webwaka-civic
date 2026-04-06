@@ -1,60 +1,30 @@
+# webwaka-civic — Cloudflare Workers configuration
+# Shared 2-DB model: webwaka-production-db + webwaka-staging-db
+# Table prefix: civic_
+
 name = "webwaka-civic"
 main = "src/worker.ts"
 compatibility_date = "2024-12-05"
 compatibility_flags = ["nodejs_compat"]
-account_id = "a5f5864b726209519e0c361f2bb90e79"
-
-[vars]
-ENVIRONMENT = "development"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "webwaka-civic-db-prod"
-database_id = "3c0e20b9-e214-4fd0-8f0b-05e59109a74c"
 
 [[r2_buckets]]
 binding = "STORAGE"
 bucket_name = "webwaka-civic-storage"
 
-[assets]
-directory = "./dist"
-
-# Build is handled separately for frontend (npm run build)
-# Worker is bundled directly by wrangler from src/worker.ts
-
-# ─── Production Environment ──────────────────────────────────────────────────
+# ── Production Environment ──────────────────────────────────────────────────
 [env.production]
 name = "webwaka-civic-api-prod"
 compatibility_date = "2024-12-05"
 compatibility_flags = ["nodejs_compat"]
-
-[env.production.vars]
-ENVIRONMENT = "production"
+vars = { ENVIRONMENT = "production" }
 
 [[env.production.d1_databases]]
 binding = "DB"
-database_name = "webwaka-civic-db-prod"
-database_id = "3c0e20b9-e214-4fd0-8f0b-05e59109a74c"
+database_name = "webwaka-production-db"
+database_id = "d01940d3-d69e-4455-94ba-bc2404cb3872"
+migrations_dir = "migrations"
 
 [[env.production.r2_buckets]]
-binding = "STORAGE"
-bucket_name = "webwaka-civic-storage"
-
-# ─── Staging Environment ─────────────────────────────────────────────────────
-[env.staging]
-name = "webwaka-civic-api-staging"
-compatibility_date = "2024-12-05"
-compatibility_flags = ["nodejs_compat"]
-
-[env.staging.vars]
-ENVIRONMENT = "staging"
-
-[[env.staging.d1_databases]]
-binding = "DB"
-database_name = "webwaka-civic-db-prod"
-database_id = "3c0e20b9-e214-4fd0-8f0b-05e59109a74c"
-
-[[env.staging.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "webwaka-civic-storage"
 
@@ -66,3 +36,20 @@ queue = "webwaka-civic-events-prod"
 queue = "webwaka-civic-events-prod"
 max_batch_size = 10
 max_batch_timeout = 5
+
+# ── Staging Environment ─────────────────────────────────────────────────────
+[env.staging]
+name = "webwaka-civic-api-staging"
+compatibility_date = "2024-12-05"
+compatibility_flags = ["nodejs_compat"]
+vars = { ENVIRONMENT = "staging" }
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "webwaka-staging-db"
+database_id = "d7278ca0-2408-40d5-a08b-d8456601f667"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "webwaka-civic-storage"

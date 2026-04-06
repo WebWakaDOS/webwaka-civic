@@ -20,7 +20,7 @@ export const REPORT_PRIORITIES: ReportPriority[] = ["low", "medium", "high", "ur
 // ─── DB Row ───────────────────────────────────────────────────────────────────
 
 /**
- * Mirrors the `citizen_reports` D1 table column-for-column.
+ * Mirrors the `civic_citizen_reports` D1 table column-for-column.
  * All timestamps are Unix milliseconds.
  */
 export interface CitizenReport {

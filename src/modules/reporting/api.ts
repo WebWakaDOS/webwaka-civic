@@ -132,7 +132,7 @@ app.post("/api/reporting/reports", async (c) => {
   const now = nowMs();
 
   const stmt = c.env.DB.prepare(`
-    INSERT INTO citizen_reports
+    INSERT INTO civic_citizen_reports
       (id, tenantId, userId,
        description, userCategory, lat, lng, address, imageUrl,
        aiCategory, aiConfidence, aiNotes, aiTriagedAt,
@@ -165,7 +165,7 @@ app.post("/api/reporting/reports", async (c) => {
     .run();
 
   const report = await c.env.DB
-    .prepare("SELECT * FROM citizen_reports WHERE id = ?")
+    .prepare("SELECT * FROM civic_citizen_reports WHERE id = ?")
     .bind(id)
     .first<CitizenReport>();
 
@@ -222,11 +222,11 @@ app.get("/api/reporting/reports", async (c) => {
 
   const [countRow, rows] = await Promise.all([
     c.env.DB
-      .prepare(`SELECT COUNT(*) as cnt FROM citizen_reports ${where}`)
+      .prepare(`SELECT COUNT(*) as cnt FROM civic_citizen_reports ${where}`)
       .bind(...bindings)
       .first<{ cnt: number }>(),
     c.env.DB
-      .prepare(`SELECT * FROM citizen_reports ${where} ORDER BY createdAt DESC LIMIT ? OFFSET ?`)
+      .prepare(`SELECT * FROM civic_citizen_reports ${where} ORDER BY createdAt DESC LIMIT ? OFFSET ?`)
       .bind(...bindings, limit, offset)
       .all<CitizenReport>(),
   ]);
@@ -249,22 +249,22 @@ app.get("/api/reporting/reports/stats", async (c) => {
 
   const [statusRows, categoryRows, priorityRows, totalRow] = await Promise.all([
     c.env.DB
-      .prepare(`SELECT status, COUNT(*) as cnt FROM citizen_reports
+      .prepare(`SELECT status, COUNT(*) as cnt FROM civic_citizen_reports
                 WHERE tenantId = ? AND deletedAt IS NULL GROUP BY status`)
       .bind(payload.tenantId)
       .all<{ status: string; cnt: number }>(),
     c.env.DB
       .prepare(`SELECT COALESCE(aiCategory,'Uncategorised') as cat, COUNT(*) as cnt
-                FROM citizen_reports WHERE tenantId = ? AND deletedAt IS NULL GROUP BY cat`)
+                FROM civic_citizen_reports WHERE tenantId = ? AND deletedAt IS NULL GROUP BY cat`)
       .bind(payload.tenantId)
       .all<{ cat: string; cnt: number }>(),
     c.env.DB
-      .prepare(`SELECT priority, COUNT(*) as cnt FROM citizen_reports
+      .prepare(`SELECT priority, COUNT(*) as cnt FROM civic_citizen_reports
                 WHERE tenantId = ? AND deletedAt IS NULL GROUP BY priority`)
       .bind(payload.tenantId)
       .all<{ priority: string; cnt: number }>(),
     c.env.DB
-      .prepare(`SELECT COUNT(*) as cnt FROM citizen_reports WHERE tenantId = ? AND deletedAt IS NULL`)
+      .prepare(`SELECT COUNT(*) as cnt FROM civic_citizen_reports WHERE tenantId = ? AND deletedAt IS NULL`)
       .bind(payload.tenantId)
       .first<{ cnt: number }>(),
   ]);
@@ -292,7 +292,7 @@ app.get("/api/reporting/reports/:id", async (c) => {
   const { id }  = c.req.param();
 
   const report = await c.env.DB
-    .prepare("SELECT * FROM citizen_reports WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+    .prepare("SELECT * FROM civic_citizen_reports WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
     .bind(id, payload.tenantId)
     .first<CitizenReport>();
 
@@ -323,7 +323,7 @@ app.patch("/api/reporting/reports/:id/status", async (c) => {
   if (!REPORT_STATUSES.includes(body.status))      return apiError(`status must be one of: ${REPORT_STATUSES.join(", ")}`, 422);
 
   const existing = await c.env.DB
-    .prepare("SELECT id FROM citizen_reports WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+    .prepare("SELECT id FROM civic_citizen_reports WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
     .bind(id, payload.tenantId)
     .first<{ id: string }>();
   if (!existing) return apiError("Report not found", 404);
@@ -333,7 +333,7 @@ app.patch("/api/reporting/reports/:id/status", async (c) => {
 
   await c.env.DB
     .prepare(`
-      UPDATE citizen_reports
+      UPDATE civic_citizen_reports
       SET status = ?,
           resolutionNotes = COALESCE(?, resolutionNotes),
           resolvedAt = CASE WHEN ? THEN ? ELSE resolvedAt END,
@@ -352,7 +352,7 @@ app.patch("/api/reporting/reports/:id/status", async (c) => {
     .run();
 
   const updated = await c.env.DB
-    .prepare("SELECT * FROM citizen_reports WHERE id = ?")
+    .prepare("SELECT * FROM civic_citizen_reports WHERE id = ?")
     .bind(id)
     .first<CitizenReport>();
 
@@ -380,7 +380,7 @@ app.patch("/api/reporting/reports/:id/assign", async (c) => {
   }
 
   const existing = await c.env.DB
-    .prepare("SELECT id FROM citizen_reports WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
+    .prepare("SELECT id FROM civic_citizen_reports WHERE id = ? AND tenantId = ? AND deletedAt IS NULL")
     .bind(id, payload.tenantId)
     .first<{ id: string }>();
   if (!existing) return apiError("Report not found", 404);
@@ -389,7 +389,7 @@ app.patch("/api/reporting/reports/:id/assign", async (c) => {
 
   await c.env.DB
     .prepare(`
-      UPDATE citizen_reports
+      UPDATE civic_citizen_reports
       SET assignedDepartment = ?,
           priority = COALESCE(?, priority),
           status = CASE WHEN status = 'open' THEN 'in_progress' ELSE status END,
@@ -406,7 +406,7 @@ app.patch("/api/reporting/reports/:id/assign", async (c) => {
     .run();
 
   const updated = await c.env.DB
-    .prepare("SELECT * FROM citizen_reports WHERE id = ?")
+    .prepare("SELECT * FROM civic_citizen_reports WHERE id = ?")
     .bind(id)
     .first<CitizenReport>();
 
