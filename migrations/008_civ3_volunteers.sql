@@ -6,31 +6,18 @@
 
 -- ─── Table 1: civic_volunteers ──────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_volunteers (
-  id TEXT PRIMARY KEY,
-  electionId TEXT NOT NULL,
-  tenantId TEXT NOT NULL,
-  voterId TEXT NOT NULL,
-  firstName TEXT NOT NULL,
-  lastName TEXT NOT NULL,
-  email TEXT,
-  phone TEXT,
-  profileImage TEXT,
-  bio TEXT,
-  skills TEXT, -- JSON: ["canvassing", "phonebanking", "event_organizing"]
-  availability TEXT, -- JSON: {"monday": ["09:00-17:00"], "tuesday": [...]}
-  status TEXT NOT NULL DEFAULT 'active', -- active, inactive, suspended, banned
-  joinedAt INTEGER NOT NULL,
-  lastActiveAt INTEGER,
-  ndprConsent BOOLEAN NOT NULL DEFAULT 0,
-  dataProcessingConsent BOOLEAN NOT NULL DEFAULT 0,
-  deletedAt INTEGER,
-  createdAt INTEGER NOT NULL,
-  updatedAt INTEGER NOT NULL,
-  
-  UNIQUE(electionId, voterId),
-  FOREIGN KEY(electionId) REFERENCES civic_elections(id)
-);
+-- NOTE: civic_volunteers was created in 006_civ3_elections.sql
+-- Adding new columns for Phase 3 volunteer management system
+ALTER TABLE civic_volunteers ADD COLUMN electionId TEXT;
+ALTER TABLE civic_volunteers ADD COLUMN voterId TEXT;
+ALTER TABLE civic_volunteers ADD COLUMN firstName TEXT;
+ALTER TABLE civic_volunteers ADD COLUMN lastName TEXT;
+ALTER TABLE civic_volunteers ADD COLUMN profileImage TEXT;
+ALTER TABLE civic_volunteers ADD COLUMN bio TEXT;
+ALTER TABLE civic_volunteers ADD COLUMN joinedAt INTEGER;
+ALTER TABLE civic_volunteers ADD COLUMN lastActiveAt INTEGER;
+ALTER TABLE civic_volunteers ADD COLUMN ndprConsent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE civic_volunteers ADD COLUMN dataProcessingConsent INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_civic_volunteers_election_status 
   ON civic_volunteers(electionId, status);
@@ -276,7 +263,7 @@ SELECT
 FROM civic_volunteer_leaderboards l
 JOIN civic_volunteers v ON l.volunteerId = v.id
 WHERE l.deletedAt IS NULL AND v.deletedAt IS NULL
-ORDER BY l.rank ASC;
+;
 
 CREATE VIEW IF NOT EXISTS vw_task_assignments AS
 SELECT 
