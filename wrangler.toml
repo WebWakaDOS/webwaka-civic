@@ -28,16 +28,6 @@ migrations_dir = "migrations"
 binding = "STORAGE"
 bucket_name = "webwaka-civic-storage"
 
-[[env.production.queues.producers]]
-binding = "CIVIC_EVENTS"
-queue = "webwaka-civic-events-prod"
-
-[[env.production.queues.consumers]]
-queue = "webwaka-civic-events-prod"
-max_batch_size = 10
-max_batch_timeout = 5
-
-# ── Staging Environment ─────────────────────────────────────────────────────
 [env.staging]
 name = "webwaka-civic-api-staging"
 compatibility_date = "2024-12-05"
