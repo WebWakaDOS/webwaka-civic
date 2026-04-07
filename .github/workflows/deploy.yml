@@ -83,7 +83,7 @@ jobs:
             [[ "$line" =~ ^-- ]] && continue
             [[ -z "$line" ]] && continue
             npx wrangler d1 execute DB --env production --remote --command "$line" 2>/dev/null || true
-          done < migrations/009a_upgrade_campaign_tables_from_006.sql
+          done < .github/scripts/009a_upgrade_campaign_tables_from_006.sql
           echo "✅ Campaign table upgrade complete"
 
       - name: Apply D1 Migrations (Production)
@@ -146,7 +146,7 @@ jobs:
             [[ "$line" =~ ^-- ]] && continue
             [[ -z "$line" ]] && continue
             npx wrangler d1 execute DB --env staging --remote --command "$line" 2>/dev/null || true
-          done < migrations/009a_upgrade_campaign_tables_from_006.sql
+          done < .github/scripts/009a_upgrade_campaign_tables_from_006.sql
           echo "✅ Campaign table upgrade complete"
 
       - name: Apply D1 Migrations (Staging)
