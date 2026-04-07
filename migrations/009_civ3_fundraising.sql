@@ -4,9 +4,9 @@
 -- Idempotent: Yes (all CREATE TABLE IF NOT EXISTS)
 -- Rollback: Not supported in D1 (manual cleanup required)
 
--- ─── Table 1: civic_campaign_donations ──────────────────────────────────────
+-- ─── Table 1: civc_campaign_donations ──────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_campaign_donations (
+CREATE TABLE IF NOT EXISTS civc_campaign_donations (
   id TEXT PRIMARY KEY,
   electionId TEXT NOT NULL,
   campaignId TEXT,
@@ -35,27 +35,27 @@ CREATE TABLE IF NOT EXISTS civic_campaign_donations (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   
-  FOREIGN KEY(electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY(electionId) REFERENCES civc_elections(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_civic_donations_election_status 
-  ON civic_campaign_donations(electionId, status);
+CREATE INDEX IF NOT EXISTS idx_civc_donations_election_status 
+  ON civc_campaign_donations(electionId, status);
 
-CREATE INDEX IF NOT EXISTS idx_civic_donations_campaign 
-  ON civic_campaign_donations(campaignId);
+CREATE INDEX IF NOT EXISTS idx_civc_donations_campaign 
+  ON civc_campaign_donations(campaignId);
 
-CREATE INDEX IF NOT EXISTS idx_civic_donations_donor_email 
-  ON civic_campaign_donations(donorEmail);
+CREATE INDEX IF NOT EXISTS idx_civc_donations_donor_email 
+  ON civc_campaign_donations(donorEmail);
 
-CREATE INDEX IF NOT EXISTS idx_civic_donations_payment_ref 
-  ON civic_campaign_donations(paymentReference);
+CREATE INDEX IF NOT EXISTS idx_civc_donations_payment_ref 
+  ON civc_campaign_donations(paymentReference);
 
-CREATE INDEX IF NOT EXISTS idx_civic_donations_tenant 
-  ON civic_campaign_donations(tenantId, id);
+CREATE INDEX IF NOT EXISTS idx_civc_donations_tenant 
+  ON civc_campaign_donations(tenantId, id);
 
--- ─── Table 2: civic_campaign_expenses ───────────────────────────────────────
+-- ─── Table 2: civc_campaign_expenses ───────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_campaign_expenses (
+CREATE TABLE IF NOT EXISTS civc_campaign_expenses (
   id TEXT PRIMARY KEY,
   electionId TEXT NOT NULL,
   campaignId TEXT,
@@ -82,27 +82,27 @@ CREATE TABLE IF NOT EXISTS civic_campaign_expenses (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   
-  FOREIGN KEY(electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY(electionId) REFERENCES civc_elections(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_civic_expenses_election_status 
-  ON civic_campaign_expenses(electionId, status);
+CREATE INDEX IF NOT EXISTS idx_civc_expenses_election_status 
+  ON civc_campaign_expenses(electionId, status);
 
-CREATE INDEX IF NOT EXISTS idx_civic_expenses_campaign 
-  ON civic_campaign_expenses(campaignId);
+CREATE INDEX IF NOT EXISTS idx_civc_expenses_campaign 
+  ON civc_campaign_expenses(campaignId);
 
-CREATE INDEX IF NOT EXISTS idx_civic_expenses_category 
-  ON civic_campaign_expenses(category);
+CREATE INDEX IF NOT EXISTS idx_civc_expenses_category 
+  ON civc_campaign_expenses(category);
 
-CREATE INDEX IF NOT EXISTS idx_civic_expenses_approval_status 
-  ON civic_campaign_expenses(status, approvedAt);
+CREATE INDEX IF NOT EXISTS idx_civc_expenses_approval_status 
+  ON civc_campaign_expenses(status, approvedAt);
 
-CREATE INDEX IF NOT EXISTS idx_civic_expenses_tenant 
-  ON civic_campaign_expenses(tenantId, id);
+CREATE INDEX IF NOT EXISTS idx_civc_expenses_tenant 
+  ON civc_campaign_expenses(tenantId, id);
 
--- ─── Table 3: civic_campaign_budget ─────────────────────────────────────────
+-- ─── Table 3: civc_campaign_budget ─────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_campaign_budget (
+CREATE TABLE IF NOT EXISTS civc_campaign_budget (
   id TEXT PRIMARY KEY,
   electionId TEXT NOT NULL,
   campaignId TEXT,
@@ -121,40 +121,40 @@ CREATE TABLE IF NOT EXISTS civic_campaign_budget (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   
-  FOREIGN KEY(electionId) REFERENCES civic_elections(id),
+  FOREIGN KEY(electionId) REFERENCES civc_elections(id),
   UNIQUE(campaignId, category)
 );
 
-CREATE INDEX IF NOT EXISTS idx_civic_budget_election 
-  ON civic_campaign_budget(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_budget_election 
+  ON civc_campaign_budget(electionId);
 
-CREATE INDEX IF NOT EXISTS idx_civic_budget_campaign 
-  ON civic_campaign_budget(campaignId);
+CREATE INDEX IF NOT EXISTS idx_civc_budget_campaign 
+  ON civc_campaign_budget(campaignId);
 
-CREATE INDEX IF NOT EXISTS idx_civic_budget_status 
-  ON civic_campaign_budget(status);
+CREATE INDEX IF NOT EXISTS idx_civc_budget_status 
+  ON civc_campaign_budget(status);
 
-CREATE INDEX IF NOT EXISTS idx_civic_budget_tenant 
-  ON civic_campaign_budget(tenantId, id);
+CREATE INDEX IF NOT EXISTS idx_civc_budget_tenant 
+  ON civc_campaign_budget(tenantId, id);
 
 -- ─── Automatic Triggers ────────────────────────────────────────────────────
 
 -- Trigger 1: Update budget on donation completion
 CREATE TRIGGER IF NOT EXISTS trg_budget_update_on_donation_complete
-AFTER UPDATE OF status ON civic_campaign_donations
+AFTER UPDATE OF status ON civc_campaign_donations
 WHEN NEW.status = 'completed'
 BEGIN
-  UPDATE civic_campaign_budget 
+  UPDATE civc_campaign_budget 
   SET raisedFunds = raisedFunds + NEW.amount, updatedAt = NEW.updatedAt
   WHERE campaignId = NEW.campaignId AND category = 'overall';
 END;
 
 -- Trigger 2: Update budget on donation refund
 CREATE TRIGGER IF NOT EXISTS trg_budget_update_on_donation_refund
-AFTER UPDATE OF status ON civic_campaign_donations
+AFTER UPDATE OF status ON civc_campaign_donations
 WHEN NEW.status = 'refunded'
 BEGIN
-  UPDATE civic_campaign_budget 
+  UPDATE civc_campaign_budget 
   SET raisedFunds = CASE 
     WHEN raisedFunds >= COALESCE(NEW.refundAmount, NEW.amount) 
     THEN raisedFunds - COALESCE(NEW.refundAmount, NEW.amount)
@@ -165,20 +165,20 @@ END;
 
 -- Trigger 3: Update budget on expense approval
 CREATE TRIGGER IF NOT EXISTS trg_budget_update_on_expense_approve
-AFTER UPDATE OF status ON civic_campaign_expenses
+AFTER UPDATE OF status ON civc_campaign_expenses
 WHEN NEW.status = 'approved'
 BEGIN
-  UPDATE civic_campaign_budget 
+  UPDATE civc_campaign_budget 
   SET spentBudget = spentBudget + NEW.amount, updatedAt = NEW.updatedAt
   WHERE campaignId = NEW.campaignId AND (category = NEW.category OR category = 'overall');
 END;
 
 -- Trigger 4: Update budget on expense rejection
 CREATE TRIGGER IF NOT EXISTS trg_budget_update_on_expense_reject
-AFTER UPDATE OF status ON civic_campaign_expenses
+AFTER UPDATE OF status ON civc_campaign_expenses
 WHEN NEW.status = 'rejected' AND OLD.status = 'approved'
 BEGIN
-  UPDATE civic_campaign_budget 
+  UPDATE civc_campaign_budget 
   SET spentBudget = CASE 
     WHEN spentBudget >= NEW.amount THEN spentBudget - NEW.amount 
     ELSE 0 
@@ -188,9 +188,9 @@ END;
 
 -- Trigger 5: Create audit log on donation
 CREATE TRIGGER IF NOT EXISTS trg_donation_audit_log
-AFTER INSERT ON civic_campaign_donations
+AFTER INSERT ON civc_campaign_donations
 BEGIN
-  INSERT INTO civic_election_audit_logs (
+  INSERT INTO civc_election_audit_logs (
     id, electionId, tenantId, action, entityType, entityId, details, createdAt
   ) VALUES (
     'audit_' || NEW.id,
@@ -206,9 +206,9 @@ END;
 
 -- Trigger 6: Create audit log on expense
 CREATE TRIGGER IF NOT EXISTS trg_expense_audit_log
-AFTER INSERT ON civic_campaign_expenses
+AFTER INSERT ON civc_campaign_expenses
 BEGIN
-  INSERT INTO civic_election_audit_logs (
+  INSERT INTO civc_election_audit_logs (
     id, electionId, tenantId, action, entityType, entityId, details, createdAt
   ) VALUES (
     'audit_' || NEW.id,
@@ -234,8 +234,8 @@ SELECT
   COUNT(DISTINCT CASE WHEN d.status = 'completed' THEN d.id END) as completedDonations,
   AVG(CASE WHEN d.status = 'completed' THEN d.amount ELSE NULL END) as avgDonation,
   COUNT(DISTINCT CASE WHEN d.status = 'pending' THEN d.id END) as pendingDonations
-FROM civic_campaign_budget b
-LEFT JOIN civic_campaign_donations d ON b.campaignId = d.campaignId AND d.deletedAt IS NULL
+FROM civc_campaign_budget b
+LEFT JOIN civc_campaign_donations d ON b.campaignId = d.campaignId AND d.deletedAt IS NULL
 WHERE b.deletedAt IS NULL
 GROUP BY b.id;
 
@@ -248,8 +248,8 @@ SELECT
   SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END) as totalPaid,
   COUNT(DISTINCT CASE WHEN e.status = 'pending' THEN e.id END) as pendingCount,
   COUNT(DISTINCT CASE WHEN e.status = 'approved' THEN e.id END) as approvedCount
-FROM civic_campaign_budget b
-LEFT JOIN civic_campaign_expenses e ON b.campaignId = e.campaignId AND e.deletedAt IS NULL
+FROM civc_campaign_budget b
+LEFT JOIN civc_campaign_expenses e ON b.campaignId = e.campaignId AND e.deletedAt IS NULL
 WHERE b.deletedAt IS NULL
 GROUP BY b.id;
 
@@ -272,7 +272,7 @@ SELECT
     THEN ROUND(100.0 * COALESCE(f.totalRaised, 0) / b.totalBudget, 2)
     ELSE 0
   END as fundraisingPercentage
-FROM civic_campaign_budget b
+FROM civc_campaign_budget b
 LEFT JOIN vw_fundraising_summary f ON b.campaignId = f.campaignId
 LEFT JOIN vw_expense_summary e ON b.campaignId = e.campaignId;
 
@@ -288,7 +288,7 @@ SELECT
   d.anonymous,
   d.ndprConsent,
   d.taxDeductible
-FROM civic_campaign_donations d
+FROM civc_campaign_donations d
 WHERE d.deletedAt IS NULL AND d.status = 'completed'
 ORDER BY d.createdAt DESC;
 
@@ -303,14 +303,14 @@ SELECT
   e.createdAt,
   e.approvedBy,
   e.approvedAt
-FROM civic_campaign_expenses e
+FROM civc_campaign_expenses e
 WHERE e.deletedAt IS NULL AND e.status IN ('pending', 'approved')
 ORDER BY CASE WHEN e.status = 'pending' THEN 0 ELSE 1 END, e.createdAt DESC;
 
 -- ─── Migration Metadata ────────────────────────────────────────────────────
 
 -- Migration applied at: 2026-03-20T13:20:00Z
--- Tables created: 3 (civic_campaign_donations, civic_campaign_expenses, civic_campaign_budget)
+-- Tables created: 3 (civc_campaign_donations, civc_campaign_expenses, civc_campaign_budget)
 -- Indexes created: 14
 -- Triggers created: 6
 -- Views created: 5

@@ -1,13 +1,13 @@
 -- WebWaka Civic — Citizen Reporting Portal
 -- Migration: 011_citizen_reporting.sql
--- Purpose: Create civic_citizen_reports table with AI triage columns
+-- Purpose: Create civc_citizen_reports table with AI triage columns
 -- Phase 1: Citizen Engagement (Plan section 4)
 -- Idempotent: Yes (all CREATE TABLE/INDEX IF NOT EXISTS)
 -- Rollback: Not supported in D1 (manual cleanup required)
 
--- ─── Table: civic_citizen_reports ──────────────────────────────────────────────────
+-- ─── Table: civc_citizen_reports ──────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_citizen_reports (
+CREATE TABLE IF NOT EXISTS civc_citizen_reports (
   id           TEXT    PRIMARY KEY,
   tenantId     TEXT    NOT NULL,
   userId       TEXT    NOT NULL,              -- JWT sub of the reporting citizen
@@ -42,24 +42,24 @@ CREATE TABLE IF NOT EXISTS civic_citizen_reports (
 -- ─── Indexes ─────────────────────────────────────────────────────────────────
 
 CREATE INDEX IF NOT EXISTS idx_citizen_reports_tenant_status
-  ON civic_citizen_reports (tenantId, status);
+  ON civc_citizen_reports (tenantId, status);
 
 CREATE INDEX IF NOT EXISTS idx_citizen_reports_tenant_user
-  ON civic_citizen_reports (tenantId, userId);
+  ON civc_citizen_reports (tenantId, userId);
 
 CREATE INDEX IF NOT EXISTS idx_citizen_reports_ai_category
-  ON civic_citizen_reports (tenantId, aiCategory);
+  ON civc_citizen_reports (tenantId, aiCategory);
 
 CREATE INDEX IF NOT EXISTS idx_citizen_reports_priority
-  ON civic_citizen_reports (tenantId, priority, status);
+  ON civc_citizen_reports (tenantId, priority, status);
 
 CREATE INDEX IF NOT EXISTS idx_citizen_reports_created
-  ON civic_citizen_reports (tenantId, createdAt DESC);
+  ON civc_citizen_reports (tenantId, createdAt DESC);
 
 CREATE INDEX IF NOT EXISTS idx_citizen_reports_department
-  ON civic_citizen_reports (tenantId, assignedDepartment, status);
+  ON civc_citizen_reports (tenantId, assignedDepartment, status);
 
 -- ─── Migration Metadata ───────────────────────────────────────────────────────
 -- Applied at: 2026-04-04T00:00:00Z
--- Tables  created: 1 (civic_citizen_reports)
+-- Tables  created: 1 (civc_citizen_reports)
 -- Indexes created: 6

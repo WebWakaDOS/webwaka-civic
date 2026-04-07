@@ -4,9 +4,9 @@
 -- Generated: 2026-03-20
 -- Idempotent: All CREATE TABLE statements use IF NOT EXISTS
 
--- ─── Table 1: civic_elections ───────────────────────────────────────────────────
+-- ─── Table 1: civc_elections ───────────────────────────────────────────────────
 -- Root entity for elections/campaigns
-CREATE TABLE IF NOT EXISTS civic_elections (
+CREATE TABLE IF NOT EXISTS civc_elections (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -22,12 +22,12 @@ CREATE TABLE IF NOT EXISTS civic_elections (
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_civic_elections_tenantId ON civic_elections(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_elections_status ON civic_elections(status);
+CREATE INDEX IF NOT EXISTS idx_civc_elections_tenantId ON civc_elections(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_elections_status ON civc_elections(status);
 
--- ─── Table 2: civic_candidates ──────────────────────────────────────────────────
+-- ─── Table 2: civc_candidates ──────────────────────────────────────────────────
 -- Candidates nominated for election
-CREATE TABLE IF NOT EXISTS civic_candidates (
+CREATE TABLE IF NOT EXISTS civc_candidates (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -43,17 +43,17 @@ CREATE TABLE IF NOT EXISTS civic_candidates (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (memberId) REFERENCES civic_members(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (memberId) REFERENCES civc_members(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_candidates_tenantId ON civic_candidates(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_candidates_electionId ON civic_candidates(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_candidates_memberId ON civic_candidates(memberId);
-CREATE INDEX IF NOT EXISTS idx_civic_candidates_status ON civic_candidates(status);
+CREATE INDEX IF NOT EXISTS idx_civc_candidates_tenantId ON civc_candidates(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_candidates_electionId ON civc_candidates(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_candidates_memberId ON civc_candidates(memberId);
+CREATE INDEX IF NOT EXISTS idx_civc_candidates_status ON civc_candidates(status);
 
--- ─── Table 3: civic_votes ──────────────────────────────────────────────────────
+-- ─── Table 3: civc_votes ──────────────────────────────────────────────────────
 -- Individual votes cast in elections
-CREATE TABLE IF NOT EXISTS civic_votes (
+CREATE TABLE IF NOT EXISTS civc_votes (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -66,19 +66,19 @@ CREATE TABLE IF NOT EXISTS civic_votes (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (voterId) REFERENCES civic_members(id),
-  FOREIGN KEY (candidateId) REFERENCES civic_candidates(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (voterId) REFERENCES civc_members(id),
+  FOREIGN KEY (candidateId) REFERENCES civc_candidates(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_votes_tenantId ON civic_votes(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_votes_electionId ON civic_votes(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_votes_voterId ON civic_votes(voterId);
-CREATE INDEX IF NOT EXISTS idx_civic_votes_candidateId ON civic_votes(candidateId);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_civic_votes_unique_voter_election ON civic_votes(electionId, voterId) WHERE deletedAt IS NULL;
+CREATE INDEX IF NOT EXISTS idx_civc_votes_tenantId ON civc_votes(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_votes_electionId ON civc_votes(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_votes_voterId ON civc_votes(voterId);
+CREATE INDEX IF NOT EXISTS idx_civc_votes_candidateId ON civc_votes(candidateId);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_civc_votes_unique_voter_election ON civc_votes(electionId, voterId) WHERE deletedAt IS NULL;
 
--- ─── Table 4: civic_voting_stations ────────────────────────────────────────────
+-- ─── Table 4: civc_voting_stations ────────────────────────────────────────────
 -- Physical or virtual voting locations
-CREATE TABLE IF NOT EXISTS civic_voting_stations (
+CREATE TABLE IF NOT EXISTS civc_voting_stations (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -92,15 +92,15 @@ CREATE TABLE IF NOT EXISTS civic_voting_stations (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_voting_stations_tenantId ON civic_voting_stations(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_voting_stations_electionId ON civic_voting_stations(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_voting_stations_status ON civic_voting_stations(status);
+CREATE INDEX IF NOT EXISTS idx_civc_voting_stations_tenantId ON civc_voting_stations(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_voting_stations_electionId ON civc_voting_stations(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_voting_stations_status ON civc_voting_stations(status);
 
--- ─── Table 5: civic_volunteers ─────────────────────────────────────────────────
+-- ─── Table 5: civc_volunteers ─────────────────────────────────────────────────
 -- Volunteers for election campaigns
-CREATE TABLE IF NOT EXISTS civic_volunteers (
+CREATE TABLE IF NOT EXISTS civc_volunteers (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   memberId TEXT NOT NULL,
@@ -116,16 +116,16 @@ CREATE TABLE IF NOT EXISTS civic_volunteers (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (memberId) REFERENCES civic_members(id)
+  FOREIGN KEY (memberId) REFERENCES civc_members(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_volunteers_tenantId ON civic_volunteers(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteers_memberId ON civic_volunteers(memberId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteers_status ON civic_volunteers(status);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteers_points ON civic_volunteers(points DESC);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteers_tenantId ON civc_volunteers(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteers_memberId ON civc_volunteers(memberId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteers_status ON civc_volunteers(status);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteers_points ON civc_volunteers(points DESC);
 
--- ─── Table 6: civic_volunteer_tasks ────────────────────────────────────────────
+-- ─── Table 6: civc_volunteer_tasks ────────────────────────────────────────────
 -- Tasks assigned to volunteers
-CREATE TABLE IF NOT EXISTS civic_volunteer_tasks (
+CREATE TABLE IF NOT EXISTS civc_volunteer_tasks (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -143,17 +143,17 @@ CREATE TABLE IF NOT EXISTS civic_volunteer_tasks (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (volunteerId) REFERENCES civic_volunteers(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (volunteerId) REFERENCES civc_volunteers(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_tasks_tenantId ON civic_volunteer_tasks(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_tasks_electionId ON civic_volunteer_tasks(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_tasks_volunteerId ON civic_volunteer_tasks(volunteerId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_tasks_status ON civic_volunteer_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_tasks_tenantId ON civc_volunteer_tasks(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_tasks_electionId ON civc_volunteer_tasks(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_tasks_volunteerId ON civc_volunteer_tasks(volunteerId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_tasks_status ON civc_volunteer_tasks(status);
 
--- ─── Table 7: civic_campaign_donations ─────────────────────────────────────────
+-- ─── Table 7: civc_campaign_donations ─────────────────────────────────────────
 -- Donations to election campaigns (kobo integers)
-CREATE TABLE IF NOT EXISTS civic_campaign_donations (
+CREATE TABLE IF NOT EXISTS civc_campaign_donations (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -171,17 +171,17 @@ CREATE TABLE IF NOT EXISTS civic_campaign_donations (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (donorId) REFERENCES civic_members(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (donorId) REFERENCES civc_members(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_donations_tenantId ON civic_campaign_donations(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_donations_electionId ON civic_campaign_donations(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_donations_donorId ON civic_campaign_donations(donorId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_donations_status ON civic_campaign_donations(status);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_donations_tenantId ON civc_campaign_donations(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_donations_electionId ON civc_campaign_donations(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_donations_donorId ON civc_campaign_donations(donorId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_donations_status ON civc_campaign_donations(status);
 
--- ─── Table 8: civic_campaign_expenses ───────────────────────────────────────────
+-- ─── Table 8: civc_campaign_expenses ───────────────────────────────────────────
 -- Campaign expenses (kobo integers)
-CREATE TABLE IF NOT EXISTS civic_campaign_expenses (
+CREATE TABLE IF NOT EXISTS civc_campaign_expenses (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -196,15 +196,15 @@ CREATE TABLE IF NOT EXISTS civic_campaign_expenses (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_expenses_tenantId ON civic_campaign_expenses(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_expenses_electionId ON civic_campaign_expenses(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_expenses_approvalStatus ON civic_campaign_expenses(approvalStatus);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_expenses_tenantId ON civc_campaign_expenses(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_expenses_electionId ON civc_campaign_expenses(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_expenses_approvalStatus ON civc_campaign_expenses(approvalStatus);
 
--- ─── Table 9: civic_campaign_materials ──────────────────────────────────────────
+-- ─── Table 9: civc_campaign_materials ──────────────────────────────────────────
 -- Campaign materials (posters, videos, documents, etc.)
-CREATE TABLE IF NOT EXISTS civic_campaign_materials (
+CREATE TABLE IF NOT EXISTS civc_campaign_materials (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -221,15 +221,15 @@ CREATE TABLE IF NOT EXISTS civic_campaign_materials (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_materials_tenantId ON civic_campaign_materials(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_materials_electionId ON civic_campaign_materials(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_materials_status ON civic_campaign_materials(status);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_materials_tenantId ON civc_campaign_materials(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_materials_electionId ON civc_campaign_materials(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_materials_status ON civc_campaign_materials(status);
 
--- ─── Table 10: civic_campaign_announcements ────────────────────────────────────
+-- ─── Table 10: civc_campaign_announcements ────────────────────────────────────
 -- Campaign announcements and updates
-CREATE TABLE IF NOT EXISTS civic_campaign_announcements (
+CREATE TABLE IF NOT EXISTS civc_campaign_announcements (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -242,15 +242,15 @@ CREATE TABLE IF NOT EXISTS civic_campaign_announcements (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_announcements_tenantId ON civic_campaign_announcements(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_announcements_electionId ON civic_campaign_announcements(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_campaign_announcements_priority ON civic_campaign_announcements(priority);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_announcements_tenantId ON civc_campaign_announcements(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_announcements_electionId ON civc_campaign_announcements(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_campaign_announcements_priority ON civc_campaign_announcements(priority);
 
--- ─── Table 11: civic_election_results ───────────────────────────────────────────
+-- ─── Table 11: civc_election_results ───────────────────────────────────────────
 -- Final election results
-CREATE TABLE IF NOT EXISTS civic_election_results (
+CREATE TABLE IF NOT EXISTS civc_election_results (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -263,16 +263,16 @@ CREATE TABLE IF NOT EXISTS civic_election_results (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (candidateId) REFERENCES civic_candidates(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (candidateId) REFERENCES civc_candidates(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_election_results_tenantId ON civic_election_results(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_election_results_electionId ON civic_election_results(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_election_results_candidateId ON civic_election_results(candidateId);
+CREATE INDEX IF NOT EXISTS idx_civc_election_results_tenantId ON civc_election_results(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_election_results_electionId ON civc_election_results(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_election_results_candidateId ON civc_election_results(candidateId);
 
--- ─── Table 12: civic_volunteer_messages ─────────────────────────────────────────
+-- ─── Table 12: civc_volunteer_messages ─────────────────────────────────────────
 -- In-app messaging for volunteers
-CREATE TABLE IF NOT EXISTS civic_volunteer_messages (
+CREATE TABLE IF NOT EXISTS civc_volunteer_messages (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -284,18 +284,18 @@ CREATE TABLE IF NOT EXISTS civic_volunteer_messages (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (senderId) REFERENCES civic_members(id),
-  FOREIGN KEY (recipientId) REFERENCES civic_members(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (senderId) REFERENCES civc_members(id),
+  FOREIGN KEY (recipientId) REFERENCES civc_members(id)
 );
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_messages_tenantId ON civic_volunteer_messages(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_messages_electionId ON civic_volunteer_messages(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_messages_recipientId ON civic_volunteer_messages(recipientId);
-CREATE INDEX IF NOT EXISTS idx_civic_volunteer_messages_readAt ON civic_volunteer_messages(readAt);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_messages_tenantId ON civc_volunteer_messages(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_messages_electionId ON civc_volunteer_messages(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_messages_recipientId ON civc_volunteer_messages(recipientId);
+CREATE INDEX IF NOT EXISTS idx_civc_volunteer_messages_readAt ON civc_volunteer_messages(readAt);
 
--- ─── Table 13: civic_election_audit_logs ────────────────────────────────────────
+-- ─── Table 13: civc_election_audit_logs ────────────────────────────────────────
 -- Audit trail for all election activities
-CREATE TABLE IF NOT EXISTS civic_election_audit_logs (
+CREATE TABLE IF NOT EXISTS civc_election_audit_logs (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS civic_election_audit_logs (
   ipAddress TEXT,
   createdAt INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_civic_election_audit_logs_tenantId ON civic_election_audit_logs(tenantId);
-CREATE INDEX IF NOT EXISTS idx_civic_election_audit_logs_electionId ON civic_election_audit_logs(electionId);
-CREATE INDEX IF NOT EXISTS idx_civic_election_audit_logs_actionType ON civic_election_audit_logs(actionType);
-CREATE INDEX IF NOT EXISTS idx_civic_election_audit_logs_createdAt ON civic_election_audit_logs(createdAt DESC);
+CREATE INDEX IF NOT EXISTS idx_civc_election_audit_logs_tenantId ON civc_election_audit_logs(tenantId);
+CREATE INDEX IF NOT EXISTS idx_civc_election_audit_logs_electionId ON civc_election_audit_logs(electionId);
+CREATE INDEX IF NOT EXISTS idx_civc_election_audit_logs_actionType ON civc_election_audit_logs(actionType);
+CREATE INDEX IF NOT EXISTS idx_civc_election_audit_logs_createdAt ON civc_election_audit_logs(createdAt DESC);

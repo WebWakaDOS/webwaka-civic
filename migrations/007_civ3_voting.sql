@@ -4,9 +4,9 @@
 -- Description: Offline-capable voting system with ballot capture, session management, and INEC audit trail
 -- Idempotent: YES (all operations wrapped in IF NOT EXISTS or conditional checks)
 
--- ─── Table: civic_voter_sessions ──────────────────────────────────────────────
+-- ─── Table: civc_voter_sessions ──────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_voter_sessions (
+CREATE TABLE IF NOT EXISTS civc_voter_sessions (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -18,17 +18,17 @@ CREATE TABLE IF NOT EXISTS civic_voter_sessions (
   createdAt INTEGER NOT NULL,
   expiresAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (votingStationId) REFERENCES civic_voting_stations(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (votingStationId) REFERENCES civc_voting_stations(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_voter_sessions_election ON civic_voter_sessions(electionId, voterId);
-CREATE INDEX IF NOT EXISTS idx_voter_sessions_token ON civic_voter_sessions(sessionToken);
-CREATE INDEX IF NOT EXISTS idx_voter_sessions_tenant ON civic_voter_sessions(tenantId);
+CREATE INDEX IF NOT EXISTS idx_voter_sessions_election ON civc_voter_sessions(electionId, voterId);
+CREATE INDEX IF NOT EXISTS idx_voter_sessions_token ON civc_voter_sessions(sessionToken);
+CREATE INDEX IF NOT EXISTS idx_voter_sessions_tenant ON civc_voter_sessions(tenantId);
 
--- ─── Table: civic_ballots ────────────────────────────────────────────────────
+-- ─── Table: civc_ballots ────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_ballots (
+CREATE TABLE IF NOT EXISTS civc_ballots (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -46,19 +46,19 @@ CREATE TABLE IF NOT EXISTS civic_ballots (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL,
   deletedAt INTEGER,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (candidateId) REFERENCES civic_candidates(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (candidateId) REFERENCES civc_candidates(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_ballots_election ON civic_ballots(electionId, voterId);
-CREATE INDEX IF NOT EXISTS idx_ballots_candidate ON civic_ballots(candidateId);
-CREATE INDEX IF NOT EXISTS idx_ballots_status ON civic_ballots(ballotStatus);
-CREATE INDEX IF NOT EXISTS idx_ballots_tenant ON civic_ballots(tenantId);
-CREATE INDEX IF NOT EXISTS idx_ballots_offline_sync ON civic_ballots(offlineSync);
+CREATE INDEX IF NOT EXISTS idx_ballots_election ON civc_ballots(electionId, voterId);
+CREATE INDEX IF NOT EXISTS idx_ballots_candidate ON civc_ballots(candidateId);
+CREATE INDEX IF NOT EXISTS idx_ballots_status ON civc_ballots(ballotStatus);
+CREATE INDEX IF NOT EXISTS idx_ballots_tenant ON civc_ballots(tenantId);
+CREATE INDEX IF NOT EXISTS idx_ballots_offline_sync ON civc_ballots(offlineSync);
 
--- ─── Table: civic_vote_queue ─────────────────────────────────────────────────
+-- ─── Table: civc_vote_queue ─────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_vote_queue (
+CREATE TABLE IF NOT EXISTS civc_vote_queue (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -68,33 +68,33 @@ CREATE TABLE IF NOT EXISTS civic_vote_queue (
   lastError TEXT,
   createdAt INTEGER NOT NULL,
   processedAt INTEGER,
-  FOREIGN KEY (ballotId) REFERENCES civic_ballots(id)
+  FOREIGN KEY (ballotId) REFERENCES civc_ballots(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_vote_queue_status ON civic_vote_queue(status);
-CREATE INDEX IF NOT EXISTS idx_vote_queue_election ON civic_vote_queue(electionId);
-CREATE INDEX IF NOT EXISTS idx_vote_queue_tenant ON civic_vote_queue(tenantId);
+CREATE INDEX IF NOT EXISTS idx_vote_queue_status ON civc_vote_queue(status);
+CREATE INDEX IF NOT EXISTS idx_vote_queue_election ON civc_vote_queue(electionId);
+CREATE INDEX IF NOT EXISTS idx_vote_queue_tenant ON civc_vote_queue(tenantId);
 
--- ─── Table: civic_vote_tallies ───────────────────────────────────────────────
+-- ─── Table: civc_vote_tallies ───────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_vote_tallies (
+CREATE TABLE IF NOT EXISTS civc_vote_tallies (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
   candidateId TEXT NOT NULL,
   voteCount INTEGER DEFAULT 0,
   lastUpdatedAt INTEGER NOT NULL,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (candidateId) REFERENCES civic_candidates(id),
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (candidateId) REFERENCES civc_candidates(id),
   UNIQUE(tenantId, electionId, candidateId)
 );
 
-CREATE INDEX IF NOT EXISTS idx_vote_tallies_election ON civic_vote_tallies(electionId);
-CREATE INDEX IF NOT EXISTS idx_vote_tallies_tenant ON civic_vote_tallies(tenantId);
+CREATE INDEX IF NOT EXISTS idx_vote_tallies_election ON civc_vote_tallies(electionId);
+CREATE INDEX IF NOT EXISTS idx_vote_tallies_tenant ON civc_vote_tallies(tenantId);
 
--- ─── Table: civic_vote_audit_log ─────────────────────────────────────────────
+-- ─── Table: civc_vote_audit_log ─────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_vote_audit_log (
+CREATE TABLE IF NOT EXISTS civc_vote_audit_log (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -106,19 +106,19 @@ CREATE TABLE IF NOT EXISTS civic_vote_audit_log (
   ipAddress TEXT,
   userAgent TEXT,
   createdAt INTEGER NOT NULL,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id),
-  FOREIGN KEY (ballotId) REFERENCES civic_ballots(id),
-  FOREIGN KEY (sessionId) REFERENCES civic_voter_sessions(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id),
+  FOREIGN KEY (ballotId) REFERENCES civc_ballots(id),
+  FOREIGN KEY (sessionId) REFERENCES civc_voter_sessions(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_vote_audit_log_election ON civic_vote_audit_log(electionId);
-CREATE INDEX IF NOT EXISTS idx_vote_audit_log_action ON civic_vote_audit_log(action);
-CREATE INDEX IF NOT EXISTS idx_vote_audit_log_tenant ON civic_vote_audit_log(tenantId);
-CREATE INDEX IF NOT EXISTS idx_vote_audit_log_created ON civic_vote_audit_log(createdAt);
+CREATE INDEX IF NOT EXISTS idx_vote_audit_log_election ON civc_vote_audit_log(electionId);
+CREATE INDEX IF NOT EXISTS idx_vote_audit_log_action ON civc_vote_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_vote_audit_log_tenant ON civc_vote_audit_log(tenantId);
+CREATE INDEX IF NOT EXISTS idx_vote_audit_log_created ON civc_vote_audit_log(createdAt);
 
--- ─── Table: civic_vote_conflicts ─────────────────────────────────────────────
+-- ─── Table: civc_vote_conflicts ─────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_vote_conflicts (
+CREATE TABLE IF NOT EXISTS civc_vote_conflicts (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -132,13 +132,13 @@ CREATE TABLE IF NOT EXISTS civic_vote_conflicts (
   createdAt INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_vote_conflicts_election ON civic_vote_conflicts(electionId);
-CREATE INDEX IF NOT EXISTS idx_vote_conflicts_voter ON civic_vote_conflicts(voterId);
-CREATE INDEX IF NOT EXISTS idx_vote_conflicts_tenant ON civic_vote_conflicts(tenantId);
+CREATE INDEX IF NOT EXISTS idx_vote_conflicts_election ON civc_vote_conflicts(electionId);
+CREATE INDEX IF NOT EXISTS idx_vote_conflicts_voter ON civc_vote_conflicts(voterId);
+CREATE INDEX IF NOT EXISTS idx_vote_conflicts_tenant ON civc_vote_conflicts(tenantId);
 
--- ─── Table: civic_voting_statistics ──────────────────────────────────────────
+-- ─── Table: civc_voting_statistics ──────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS civic_voting_statistics (
+CREATE TABLE IF NOT EXISTS civc_voting_statistics (
   id TEXT PRIMARY KEY,
   tenantId TEXT NOT NULL,
   electionId TEXT NOT NULL,
@@ -150,29 +150,29 @@ CREATE TABLE IF NOT EXISTS civic_voting_statistics (
   conflictCount INTEGER DEFAULT 0,
   rejectedVotes INTEGER DEFAULT 0,
   lastUpdatedAt INTEGER NOT NULL,
-  FOREIGN KEY (electionId) REFERENCES civic_elections(id)
+  FOREIGN KEY (electionId) REFERENCES civc_elections(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_voting_statistics_election ON civic_voting_statistics(electionId);
-CREATE INDEX IF NOT EXISTS idx_voting_statistics_tenant ON civic_voting_statistics(tenantId);
+CREATE INDEX IF NOT EXISTS idx_voting_statistics_election ON civc_voting_statistics(electionId);
+CREATE INDEX IF NOT EXISTS idx_voting_statistics_tenant ON civc_voting_statistics(tenantId);
 
 -- ─── Alter existing tables ────────────────────────────────────────────────────
 
--- Add columns to civic_votes if they don't exist
+-- Add columns to civc_votes if they don't exist
 -- Note: SQLite doesn't support IF NOT EXISTS for ADD COLUMN, so we use a workaround
 -- by checking if the column exists first (this is handled by the application layer)
 
--- Add columns to civic_candidates if they don't exist
+-- Add columns to civc_candidates if they don't exist
 -- realTimeVoteCount and verifiedVoteCount for tracking
 
 -- ─── Triggers for automatic vote tally updates ────────────────────────────────
 
 -- Trigger: Update vote tally on new ballot submission
 CREATE TRIGGER IF NOT EXISTS trigger_update_vote_tally_on_ballot_submit
-AFTER UPDATE OF ballotStatus ON civic_ballots
+AFTER UPDATE OF ballotStatus ON civc_ballots
 WHEN NEW.ballotStatus = 'submitted' AND OLD.ballotStatus != 'submitted'
 BEGIN
-  INSERT INTO civic_vote_tallies (id, tenantId, electionId, candidateId, voteCount, lastUpdatedAt)
+  INSERT INTO civc_vote_tallies (id, tenantId, electionId, candidateId, voteCount, lastUpdatedAt)
   VALUES (
     lower(hex(randomblob(16))),
     NEW.tenantId,
@@ -188,9 +188,9 @@ END;
 
 -- Trigger: Create audit log entry on ballot creation
 CREATE TRIGGER IF NOT EXISTS trigger_audit_ballot_created
-AFTER INSERT ON civic_ballots
+AFTER INSERT ON civc_ballots
 BEGIN
-  INSERT INTO civic_vote_audit_log (
+  INSERT INTO civc_vote_audit_log (
     id, tenantId, electionId, ballotId, action, details, createdAt
   ) VALUES (
     lower(hex(randomblob(16))),
@@ -205,10 +205,10 @@ END;
 
 -- Trigger: Create audit log entry on ballot submission
 CREATE TRIGGER IF NOT EXISTS trigger_audit_ballot_submitted
-AFTER UPDATE OF ballotStatus ON civic_ballots
+AFTER UPDATE OF ballotStatus ON civc_ballots
 WHEN NEW.ballotStatus = 'submitted' AND OLD.ballotStatus != 'submitted'
 BEGIN
-  INSERT INTO civic_vote_audit_log (
+  INSERT INTO civc_vote_audit_log (
     id, tenantId, electionId, ballotId, action, details, createdAt
   ) VALUES (
     lower(hex(randomblob(16))),
@@ -223,10 +223,10 @@ END;
 
 -- Trigger: Create audit log entry on ballot verification
 CREATE TRIGGER IF NOT EXISTS trigger_audit_ballot_verified
-AFTER UPDATE OF ballotStatus ON civic_ballots
+AFTER UPDATE OF ballotStatus ON civc_ballots
 WHEN NEW.ballotStatus = 'verified' AND OLD.ballotStatus != 'verified'
 BEGIN
-  INSERT INTO civic_vote_audit_log (
+  INSERT INTO civc_vote_audit_log (
     id, tenantId, electionId, ballotId, action, details, createdAt
   ) VALUES (
     lower(hex(randomblob(16))),
@@ -241,10 +241,10 @@ END;
 
 -- Trigger: Update voting statistics on ballot submission
 CREATE TRIGGER IF NOT EXISTS trigger_update_voting_stats_on_submit
-AFTER UPDATE OF ballotStatus ON civic_ballots
+AFTER UPDATE OF ballotStatus ON civc_ballots
 WHEN NEW.ballotStatus = 'submitted' AND OLD.ballotStatus != 'submitted'
 BEGIN
-  INSERT INTO civic_voting_statistics (
+  INSERT INTO civc_voting_statistics (
     id, tenantId, electionId, totalVotesReceived, 
     offlineVotes, onlineVotes, lastUpdatedAt
   ) VALUES (
@@ -273,12 +273,12 @@ SELECT
   c.name,
   COALESCE(t.voteCount, 0) as voteCount,
   ROUND((COALESCE(t.voteCount, 0) * 100.0 / NULLIF((
-    SELECT SUM(voteCount) FROM civic_vote_tallies 
+    SELECT SUM(voteCount) FROM civc_vote_tallies 
     WHERE electionId = c.electionId
   ), 0)), 2) as percentage,
   ROW_NUMBER() OVER (PARTITION BY c.electionId ORDER BY COALESCE(t.voteCount, 0) DESC) as rank
-FROM civic_candidates c
-LEFT JOIN civic_vote_tallies t ON c.id = t.candidateId
+FROM civc_candidates c
+LEFT JOIN civc_vote_tallies t ON c.id = t.candidateId
 WHERE c.deletedAt IS NULL;
 
 -- View: Voting statistics summary
@@ -294,7 +294,7 @@ SELECT
   rejectedVotes,
   ROUND((offlineVotes * 100.0 / NULLIF(totalVotesReceived, 0)), 2) as offlinePercentage,
   lastUpdatedAt
-FROM civic_voting_statistics;
+FROM civc_voting_statistics;
 
 -- View: Audit trail for compliance
 CREATE VIEW IF NOT EXISTS vw_audit_trail AS
@@ -310,7 +310,7 @@ SELECT
   userAgent,
   createdAt,
   datetime(createdAt, 'unixepoch') as createdAtFormatted
-FROM civic_vote_audit_log
+FROM civc_vote_audit_log
 ORDER BY createdAt DESC;
 
 -- ─── Migration completion marker ──────────────────────────────────────────────
