@@ -9,12 +9,12 @@
 -- Stores the HMAC-SHA256 signature over (voterId:electionId:candidateId:nonce).
 -- NULL allowed: rows inserted before this migration remain valid.
 
-ALTER TABLE civc_ballots ADD COLUMN IF NOT EXISTS ballotSignature TEXT;
+ALTER TABLE civc_ballots ADD COLUMN ballotSignature TEXT;
 
 -- ─── Add nonce column ────────────────────────────────────────────────────────
 -- Per-ballot random value that prevents replay attacks.
 
-ALTER TABLE civc_ballots ADD COLUMN IF NOT EXISTS nonce TEXT;
+ALTER TABLE civc_ballots ADD COLUMN nonce TEXT;
 
 -- ─── Index: look up ballots by signature ─────────────────────────────────────
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ballots_signature
